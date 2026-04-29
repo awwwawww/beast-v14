@@ -58,9 +58,9 @@ if start and token:
     found_count = 0
     
     for dork in dorks:
-        for page in range(1, 50):
+        for page in range(1, 100):
             try:
-                search_url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=50"
+                search_url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=100"
                 res = requests.get(search_url, headers=headers).json()
                 
                 if "items" not in res:
