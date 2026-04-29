@@ -1,8 +1,3 @@
-# === مكتبة وسائل التواصل الاجتماعي والتطبيقات السحابية ===
-import sys
-sys.modules['streamlit'] = __import__('fake_streamlit')
-print("تم تحميل بيئة Streamlit بنجاح.")
-
 import streamlit as st
 import requests
 import re
@@ -10,10 +5,10 @@ import time
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# === إعدادات الواجهة ===
+# إعدادات الواجهة
 st.set_page_config(page_title="BEAST V23 - MASSIVE & DIVERSE", layout="wide")
 
-# === نظام الدخول ===
+# نظام الدخول
 if "auth" not in st.session_state:
     st.session_state.auth = False
 
@@ -26,7 +21,7 @@ if not st.session_state.auth:
             st.rerun()
     st.stop()
 
-# === التنسيقات والألوان ===
+# التنسيقات والألوان
 st.markdown("""
 <style>
     .stApp { background-color: #000; }
@@ -41,7 +36,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# === الشريط الجانبي للإعدادات ===
+# الشريط الجانبي للإعدادات
 with st.sidebar:
     st.title("⚡ BEAST V23 - INFINITE SCAN")
     token = st.text_input("GitHub Token (اختياري للجلب التلقائي):", type="password")
@@ -56,7 +51,7 @@ radar_area = st.empty()
 st.subheader("🏆 النتائج الشغالة (Active Hits)")
 hits_area = st.container()
 
-# === دوال لجلب مصادر متعددة ===
+# دوال لجلب مصادر متعددة
 def fetch_servers_from_github_repos():
     """جلب سيرفرات من مستودعات GitHub الضخمة"""
     servers = []
@@ -83,17 +78,14 @@ def fetch_servers_from_github_repos():
                 # استخراج روابط السيرفرات من ملفات m3u
                 links = re.findall(r'(?:https?://)([a-zA-Z0-9\.-]+(?::\d+)?)/[^\s"\']*', content)
                 servers.extend(links)
-            else:
-                radar_area.warning(f"⚠️ فشل جلب {url}")
         except Exception as e:
             continue
     
-    return list(set(servers))  # إزالة التكرارات
+    return list(set(servers))
 
 def extract_servers_from_m3u(content):
     """استخراج السيرفرات من محتوى ملف m3u"""
     servers = []
-    # استخراج روابط السيرفرات من ملفات m3u
     links = re.findall(r'(?:https?://)([a-zA-Z0-9\.-]+(?::\d+)?)/[^\s"\']*', content)
     servers.extend(links)
     return servers
@@ -150,7 +142,7 @@ def search_github_dorks(token):
     all_results = []
     headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
     
-    # 1. قائمة الدروكس الموسعة (أكثر من 40 دروك)
+    # قائمة الدروكس الموسعة (أكثر من 40 دروك)
     dorks = [
         'extension:txt "http://" "username" "password" iptv',
         'extension:txt "https://" "user" "pass" "server"',
@@ -253,7 +245,7 @@ def search_github_dorks(token):
     
     return all_results
 
-# === الوظيفة الرئيسية للجلب الضخم ===
+# الوظيفة الرئيسية للجلب الضخم
 if start:
     all_servers = []
     
@@ -280,10 +272,6 @@ if start:
     # إزالة التكرارات
     unique_servers = list(set(all_servers))
     radar_area.success(f"🎯 تم جمع {len(unique_servers)} سيرفر فريد. بدء اختبارها الآن...")
-    
-    # عرض أول 100 سيرفر كمثال
-    st.subheader("🗂️ السيرفرات التي تم جمعها")
-    st.dataframe(pd.DataFrame(unique_servers[:100], columns=["السيرفر"]), use_container_width=True)
     
     # اختبار السيرفرات
     status_area = st.empty()
@@ -324,11 +312,11 @@ if start:
                     <div class="active-hit">
                         <span class="text-green">✅ Active Server #{found_count}</span><br>
                         <span class="text-white">Server: {server}</span><br>
-                        <span class="text-yellow">🔴 Link: http://{server}</span>
+                        <span class="text-yellow">🔗 Link: http://{server}</span>
                     </div>
                     """, unsafe_allow_html=True)
                 hits_list.append(server)
-            status_area.info(f"📊 نسبة اكتمال الاختبار: {len(unique_servers)-sum(1 for _ in futures)}/{len(unique_servers)}")
+            status_area.info(f"📊 نسبة اكتمال الاختبار: {len(unique_servers)-len(futures)+1}/{len(unique_servers)}")
     
     st.success(f"✅ اكتملت العملية! تم العثور على {found_count} سيرفر شغال من بين {len(unique_servers)} سيرفر تم جمعهم.")
     
