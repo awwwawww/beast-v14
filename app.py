@@ -3,18 +3,16 @@ import requests
 import re
 import threading
 import time
-import json
 import hashlib
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import os
 
 # إعدادات
-MAX_WORKERS = 10
+MAX_WORKERS = 8
 REQUEST_TIMEOUT = 4
-PAGES_PER_DORK = 20
+PAGES_PER_DORK = 15
 
-# دوال البحث
+# ================== دوال البحث الأساسية ==================
 def extract_xtream_accounts(content):
     pattern = r'(https?://[a-zA-Z0-9.-]+:\d+)/(?:player_api|get)\.php\?(?:username|user)=([^&\s]+)&(?:password|pass)=([^&\s]+)'
     return re.findall(pattern, content, re.IGNORECASE)
@@ -34,6 +32,7 @@ def check_account(host, user, pw, proxy=None):
             return {"host": host, "user": user, "pass": pw, "exp": exp_str}
     except:
         return None
+    return None
 
 def load_channels(server, proxy=None):
     try:
@@ -45,7 +44,7 @@ def load_channels(server, proxy=None):
             if isinstance(channels, list):
                 return channels
     except:
-        return []
+        pass
     return []
 
 def search_github(dork, token, page, proxy=None):
@@ -60,12 +59,24 @@ def search_github(dork, token, page, proxy=None):
         pass
     return []
 
-# ------------------- واجهة Streamlit -------------------
+def process_raw(raw_url, proxy):
+    try:
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+        resp = requests.get(raw_url, timeout=REQUEST_TIMEOUT, proxies=proxies)
+        if resp.status_code != 200:
+            return []
+        content = resp.text
+        matches = extract_xtream_accounts(content)
+        return [{"host": h, "user": u, "pass": p} for h, u, p in matches]
+    except:
+        return []
+
+# ================== واجهة Streamlit ==================
 st.set_page_config(page_title="IPTV Web Hunter", layout="wide", page_icon="📺")
 st.title("🔥 IPTV WEB HUNTER - صيد حسابات + مشغل ويب")
 st.markdown("---")
 
-# تهيئة session state
+# تهيئة session_state بشكل آمن
 if "accounts" not in st.session_state:
     st.session_state.accounts = []
 if "servers" not in st.session_state:
@@ -80,134 +91,32 @@ if "searching" not in st.session_state:
     st.session_state.searching = False
 if "log" not in st.session_state:
     st.session_state.log = []
-if "last_update" not in st.session_state:
-    st.session_state.last_update = time.time()
+if "pending_logs" not in st.session_state:
+    st.session_state.pending_logs = []   # رسائل مؤقتة من الخيط
+if "pending_accounts" not in st.session_state:
+    st.session_state.pending_accounts = []  # حسابات جديدة من الخيط
+if "last_rerun" not in st.session_state:
+    st.session_state.last_rerun = time.time()
 
 def add_log(msg):
-    st.session_state.log.insert(0, f"{datetime.now().strftime('%H:%M:%S')} - {msg}")
-    if len(st.session_state.log) > 50:
-        st.session_state.log.pop()
+    """إضافة رسالة إلى القائمة المؤقتة (يستدعيها الخيط)"""
+    st.session_state.pending_logs.append(f"{datetime.now().strftime('%H:%M:%S')} - {msg}")
 
-# ---------- شريط جانبي ----------
-with st.sidebar:
-    st.header("⚙️ الإعدادات")
-    tokens_input = st.text_area("GitHub Tokens (سطر لكل توكن)", placeholder="ghp_yourtoken1\nghp_yourtoken2")
-    proxy_input = st.text_input("🚀 بروكسي (اختياري)", placeholder="http://user:pass@ip:port")
-    st.markdown("---")
-    col_btn1, col_btn2 = st.columns(2)
-    start_btn = col_btn1.button("🌪️ بدء الصيد", type="primary", use_container_width=True)
-    stop_btn = col_btn2.button("⏹️ إيقاف الصيد", use_container_width=True)
-    st.markdown("---")
-    st.subheader("📊 النتائج")
-    st.metric("عدد الحسابات الشغالة", len(st.session_state.accounts))
-    st.metric("عدد الخوادم النشطة", len(st.session_state.servers))
-    st.markdown("---")
-    st.subheader("📋 سجل العمليات")
-    log_container = st.container(height=200)
+def flush_pending():
+    """نقل الرسائل والحسابات من القوائم المؤقتة إلى القوائم الرئيسية"""
+    if st.session_state.pending_logs:
+        st.session_state.log = st.session_state.pending_logs + st.session_state.log
+        st.session_state.log = st.session_state.log[:50]
+        st.session_state.pending_logs.clear()
+    if st.session_state.pending_accounts:
+        for acc in st.session_state.pending_accounts:
+            if not any(s['host'] == acc['host'] for s in st.session_state.servers):
+                st.session_state.servers.append(acc)
+        st.session_state.accounts.extend(st.session_state.pending_accounts)
+        st.session_state.pending_accounts.clear()
 
-# ---------- الأعمدة الرئيسية ----------
-col1, col2 = st.columns([1, 2])
-
-with col1:
-    st.subheader("🗄️ الخوادم النشطة")
-    if st.session_state.servers:
-        server_names = [f"{s['host']} | {s['user']}" for s in st.session_state.servers]
-        selected_server_name = st.selectbox("اختر خادماً:", server_names, key="server_select")
-        idx = server_names.index(selected_server_name) if selected_server_name else None
-        if idx is not None and (st.session_state.current_server != st.session_state.servers[idx]):
-            st.session_state.current_server = st.session_state.servers[idx]
-            server_key = f"{st.session_state.current_server['host']}|{st.session_state.current_server['user']}"
-            if server_key in st.session_state.channels_cache:
-                st.session_state.current_channels = st.session_state.channels_cache[server_key]
-                add_log(f"تم تحميل {len(st.session_state.current_channels)} قناة من الذاكرة")
-            else:
-                with st.spinner("جاري تحميل القنوات..."):
-                    channels = load_channels(st.session_state.current_server, proxy_input if proxy_input else None)
-                    st.session_state.channels_cache[server_key] = channels
-                    st.session_state.current_channels = channels
-                    add_log(f"تم تحميل {len(channels)} قناة من السيرفر")
-    else:
-        st.info("لا توجد خوادم نشطة بعد. ابدأ البحث.")
-
-    st.subheader("📡 قنوات السيرفر المختار")
-    if st.session_state.current_channels:
-        search_ch = st.text_input("🔍 بحث في القنوات")
-        filtered = [ch for ch in st.session_state.current_channels if search_ch.lower() in ch['name'].lower()] if search_ch else st.session_state.current_channels
-        channel_names = [f"{ch['name']} (ID:{ch['stream_id']})" for ch in filtered]
-        if channel_names:
-            selected_channel_name = st.selectbox("اختر قناة:", channel_names, key="channel_select")
-            selected_channel = filtered[channel_names.index(selected_channel_name)] if selected_channel_name else None
-            if selected_channel:
-                st.session_state.selected_channel_id = selected_channel['stream_id']
-        else:
-            st.warning("لا توجد قنوات مطابقة")
-    else:
-        st.info("اختر خادماً أولاً لظهور القنوات")
-
-with col2:
-    st.subheader("📺 مشغل الفيديو")
-    quality = st.selectbox("جودة البث", ["TS (أصلي)", "M3U8 (HLS)", "720p", "480p", "360p", "240p", "144p", "96p"], index=0)
-    use_external = st.checkbox("تشغيل في نافذة خارجية (رابط فقط)", value=False)
-    
-    if st.button("▶️ تشغيل القناة", type="primary") and st.session_state.get("selected_channel_id") and st.session_state.current_server:
-        server = st.session_state.current_server
-        ext = "m3u8" if "M3U8" in quality else "ts"
-        url = f"{server['host']}/live/{server['user']}/{server['pass']}/{st.session_state.selected_channel_id}.{ext}"
-        bitrate_map = {"720p": "720", "480p": "480", "360p": "360", "240p": "240", "144p": "144", "96p": "96"}
-        if quality in bitrate_map:
-            url += f"?bitrate={bitrate_map[quality]}"
-        
-        if use_external:
-            st.markdown(f"رابط البث (افتحه في أي مشغل):  \n`{url}`")
-            st.info("يمكنك نسخ الرابط وتشغيله في VLC أو أي مشغل خارجي")
-        else:
-            if ext == "m3u8":
-                html_code = f"""
-                <video id="video" controls autoplay width="100%" height="auto"></video>
-                <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-                <script>
-                    var video = document.getElementById('video');
-                    if (Hls.isSupported()) {{
-                        var hls = new Hls();
-                        hls.loadSource('{url}');
-                        hls.attachMedia(video);
-                        hls.on(Hls.Events.MANIFEST_PARSED, function() {{ video.play(); }});
-                    }}
-                    else if (video.canPlayType('application/vnd.apple.mpegurl')) {{
-                        video.src = '{url}';
-                        video.addEventListener('loadedmetadata', function() {{ video.play(); }});
-                    }}
-                </script>
-                """
-            else:
-                html_code = f"""
-                <video controls autoplay width="100%" height="auto">
-                    <source src="{url}" type="video/mp4">
-                    Your browser does not support the video tag.
-                </video>
-                """
-            st.components.v1.html(html_code, height=400)
-        add_log(f"تشغيل: {url[:80]}...")
-    elif not st.session_state.get("selected_channel_id"):
-        st.warning("اختر قناة أولاً")
-    elif not st.session_state.current_server:
-        st.warning("اختر خادماً أولاً")
-
-# ---------- منطق البحث (بدون أخطاء) ----------
-def process_raw(raw_url, proxy):
-    try:
-        proxies = {"http": proxy, "https": proxy} if proxy else None
-        resp = requests.get(raw_url, timeout=REQUEST_TIMEOUT, proxies=proxies)
-        if resp.status_code != 200:
-            return []
-        content = resp.text
-        matches = extract_xtream_accounts(content)
-        return [{"host": h, "user": u, "pass": p} for h,u,p in matches]
-    except:
-        return []
-
+# ================== خوارزمية البحث (تعمل في خيط منفصل ولا تلمس session_state مباشرة) ==================
 def hunt_process(tokens, proxy):
-    new_accounts = []
     unique = set()
     dorks = [
         '"player_api.php?username="', '"get.php?username="', 'filename:m3u "xtream"',
@@ -222,10 +131,10 @@ def hunt_process(tokens, proxy):
         token_idx += 1
         dork = dorks[dork_idx % len(dorks)]
         dork_idx += 1
-        for page in range(1, PAGES_PER_DORK+1):
+        for page in range(1, PAGES_PER_DORK + 1):
             if not st.session_state.searching:
                 break
-            add_log(f"بحث: {dork[:20]} | صفحة {page} | توكن {token[:8]}...")
+            add_log(f"🔍 {dork[:20]} | صفحة {page} | توكن {token[:6]}...")
             items = search_github(dork, token, page, proxy)
             if not items:
                 break
@@ -236,51 +145,147 @@ def hunt_process(tokens, proxy):
             for future in as_completed(futures):
                 if not st.session_state.searching:
                     break
-                accounts = future.result()
-                for acc in accounts:
+                raw_accounts = future.result()
+                for acc in raw_accounts:
                     uid = f"{acc['host']}{acc['user']}{acc['pass']}"
-                    if uid not in unique:
-                        unique.add(uid)
-                        checked = check_account(acc['host'], acc['user'], acc['pass'], proxy)
-                        if checked:
-                            new_accounts.append(checked)
-                            # تحديث الجلسة (سيتم عرضها عند إعادة التشغيل)
-                            st.session_state.accounts = new_accounts
-                            if not any(s['host'] == checked['host'] for s in st.session_state.servers):
-                                st.session_state.servers.append(checked)
-                            add_log(f"✅ حساب شغال: {checked['host']}")
+                    if uid in unique:
+                        continue
+                    unique.add(uid)
+                    checked = check_account(acc['host'], acc['user'], acc['pass'], proxy)
+                    if checked:
+                        add_log(f"✅ شغال: {checked['host']}")
+                        st.session_state.pending_accounts.append(checked)
             time.sleep(1)
-        time.sleep(3)
+        time.sleep(2)
     executor.shutdown(wait=False)
 
-if start_btn and not st.session_state.searching:
+# ================== الشريط الجانبي ==================
+with st.sidebar:
+    st.header("⚙️ الإعدادات")
+    tokens_input = st.text_area("GitHub Tokens (سطر لكل توكن)", placeholder="ghp_token1\nghp_token2")
+    proxy_input = st.text_input("🚀 بروكسي (اختياري)", placeholder="http://user:pass@ip:port")
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    start = col1.button("🌪️ بدء الصيد", type="primary", use_container_width=True)
+    stop = col2.button("⏹️ إيقاف الصيد", use_container_width=True)
+    st.markdown("---")
+    st.metric("💎 الحسابات الشغالة", len(st.session_state.accounts))
+    st.metric("🗄️ الخوادم النشطة", len(st.session_state.servers))
+    st.markdown("---")
+    st.subheader("📋 السجل")
+    log_area = st.container(height=250)
+
+# ================== معالجة الأزرار ==================
+if start and not st.session_state.searching:
     if not tokens_input.strip():
-        st.error("يرجى إدخال GitHub Tokens على الأقل سطر واحد")
+        st.error("يرجى إدخال GitHub Token(s)")
     else:
         st.session_state.searching = True
         tokens = [t.strip() for t in tokens_input.splitlines() if t.strip()]
         proxy = proxy_input if proxy_input else None
-        add_log("بدء البحث عن الحسابات...")
-        thread = threading.Thread(target=hunt_process, args=(tokens, proxy), daemon=True)
-        thread.start()
+        add_log("🚀 بدء البحث عن الحسابات...")
+        # تشغيل الخيط
+        threading.Thread(target=hunt_process, args=(tokens, proxy), daemon=True).start()
+        st.rerun()  # إعادة تحميل الصفحة فوراً لبدء عرض السجل
 
-if stop_btn:
+if stop:
     st.session_state.searching = False
-    add_log("تم إيقاف البحث.")
+    add_log("⏸️ تم إيقاف البحث.")
+    st.rerun()
 
-# عرض السجل
-with log_container:
+# ================== عرض السجل ==================
+flush_pending()  # تحديث القوائم الرئيسية
+with log_area:
     for msg in st.session_state.log[:30]:
         st.text(msg)
 
-# تحديث تلقائي للواجهة أثناء البحث (آمن)
+# ================== الأعمدة الرئيسية ==================
+col_left, col_right = st.columns([1, 2])
+
+with col_left:
+    st.subheader("🗄️ الخوادم النشطة")
+    if st.session_state.servers:
+        server_options = [f"{s['host']} | {s['user']}" for s in st.session_state.servers]
+        selected_server_str = st.selectbox("اختر خادماً:", server_options, key="server_select")
+        if selected_server_str:
+            idx = server_options.index(selected_server_str)
+            selected_server = st.session_state.servers[idx]
+            if st.session_state.current_server != selected_server:
+                st.session_state.current_server = selected_server
+                # تحميل القنوات من الكاش أو من السيرفر
+                key = f"{selected_server['host']}|{selected_server['user']}"
+                if key in st.session_state.channels_cache:
+                    st.session_state.current_channels = st.session_state.channels_cache[key]
+                else:
+                    with st.spinner("جاري تحميل القنوات..."):
+                        ch = load_channels(selected_server, proxy_input if proxy_input else None)
+                        st.session_state.channels_cache[key] = ch
+                        st.session_state.current_channels = ch
+                st.rerun()
+    else:
+        st.info("لا توجد خوادم بعد. ابدأ البحث.")
+
+    st.subheader("📡 قنوات السيرفر")
+    if st.session_state.current_channels:
+        search_ch = st.text_input("🔍 بحث في القنوات")
+        filtered = [c for c in st.session_state.current_channels if search_ch.lower() in c['name'].lower()] if search_ch else st.session_state.current_channels
+        ch_names = [f"{c['name']} (ID:{c['stream_id']})" for c in filtered]
+        if ch_names:
+            selected_ch_name = st.selectbox("اختر قناة:", ch_names, key="channel_select")
+            if selected_ch_name:
+                idx = ch_names.index(selected_ch_name)
+                st.session_state.selected_channel_id = filtered[idx]['stream_id']
+        else:
+            st.warning("لا توجد قنوات مطابقة")
+    else:
+        st.info("اختر خادماً أولاً")
+
+with col_right:
+    st.subheader("📺 مشغل الفيديو")
+    quality = st.selectbox("الجودة", ["M3U8 (HLS)", "TS (أصلي)", "720p", "480p", "360p", "240p", "144p", "96p"], index=0)
+    use_ext = st.checkbox("تشغيل خارجي (رابط فقط)")
+
+    if st.button("▶️ تشغيل", type="primary") and st.session_state.get("selected_channel_id") and st.session_state.current_server:
+        server = st.session_state.current_server
+        ext = "m3u8" if "M3U8" in quality else "ts"
+        url = f"{server['host']}/live/{server['user']}/{server['pass']}/{st.session_state.selected_channel_id}.{ext}"
+        bitrate = {"720p":"720","480p":"480","360p":"360","240p":"240","144p":"144","96p":"96"}
+        if quality in bitrate:
+            url += f"?bitrate={bitrate[quality]}"
+        if use_ext:
+            st.markdown(f"رابط البث: `{url}`")
+        else:
+            if ext == "m3u8":
+                st.components.v1.html(f"""
+                <video id="v" controls autoplay width="100%" height="auto"></video>
+                <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+                <script>
+                    var vid = document.getElementById('v');
+                    if (Hls.isSupported()) {{
+                        var hls = new Hls();
+                        hls.loadSource('{url}');
+                        hls.attachMedia(vid);
+                        hls.on(Hls.Events.MANIFEST_PARSED, function() {{ vid.play(); }});
+                    }} else if (vid.canPlayType('application/vnd.apple.mpegurl')) {{
+                        vid.src = '{url}';
+                        vid.addEventListener('loadedmetadata', function() {{ vid.play(); }});
+                    }}
+                </script>
+                """, height=400)
+            else:
+                st.video(url)  # تجربة بسيطة لـ TS
+        add_log(f"تشغيل: {url[:80]}...")
+    elif not st.session_state.get("selected_channel_id"):
+        st.warning("اختر قناة أولاً")
+    elif not st.session_state.current_server:
+        st.warning("اختر خادماً أولاً")
+
+# ================== التحديث التلقائي أثناء البحث ==================
 if st.session_state.searching:
-    # نتحقق إذا مر 3 ثوانٍ منذ آخر تحديث ونعيد تشغيل التطبيق
+    # نتحقق من الوقت لئلا نُحدث بشكل متكرر جداً
     now = time.time()
-    if now - st.session_state.last_update > 3:
-        st.session_state.last_update = now
-        st.rerun()   # هذه الدالة صحيحة في Streamlit
+    if now - st.session_state.last_rerun > 2.5:
+        st.session_state.last_rerun = now
+        st.rerun()
 else:
-    # إظهار رسالة في نهاية الصفحة
-    st.markdown("---")
     st.caption("يمكنك بدء البحث بالضغط على زر 'بدء الصيد'")
