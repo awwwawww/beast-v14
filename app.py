@@ -6,34 +6,15 @@ import hashlib
 import json
 import os
 from datetime import datetime
+from base64 import b64decode
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ========== إعدادات ==========
 REQUEST_TIMEOUT = 10
-MAX_WORKERS = 15
+MAX_WORKERS = 10
 DATA_FILE = "iptv_data.json"
 PASSWORD = "BEAST_V17_PRO"
-
-# ========== مصادر GitHub ==========
-GITHUB_SOURCES = [
-    # ملفات M3U شهيرة على GitHub (Raw)
-    "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/ar.m3u",
-    "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/us.m3u",
-    "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/uk.m3u",
-    "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/fr.m3u",
-    "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/de.m3u",
-    "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/tr.m3u",
-    "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/in.m3u",
-    "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/eg.m3u",
-    "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/sa.m3u",
-    # مصادر إضافية
-    "https://iptv-org.github.io/iptv/index.m3u",
-    "https://iptv-org.github.io/iptv/categories/news.m3u",
-    "https://iptv-org.github.io/iptv/categories/sports.m3u",
-    "https://iptv-org.github.io/iptv/categories/movies.m3u",
-    "https://iptv-org.github.io/iptv/categories/kids.m3u",
-    "https://iptv-org.github.io/iptv/categories/music.m3u",
-]
+GITHUB_API = "https://api.github.com"
 
 # ========== حفظ وتحميل ==========
 def load_data():
@@ -52,120 +33,228 @@ def save_data(data):
     except Exception:
         pass
 
-# ========== جلسة ==========
-def get_session():
-    s = requests.Session()
-    s.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/120.0.0.0 Safari/537.36",
-    })
-    return s
+# ========== جلسة GitHub ==========
+def get_gh_headers(token=None):
+    h = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "BEAST-V17-PRO",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    return h
 
-# ========== جلب ملف M3U من GitHub ==========
-def fetch_m3u(url, timeout=REQUEST_TIMEOUT):
-    """يجيب ملف M3U ويرجّع قائمة قنوات"""
-    session = get_session()
+# ========== البحث في GitHub Code ==========
+def search_github_code(query, token=None, per_page=30, page=1):
+    """يبحث في كود GitHub عن الكويري"""
+    url = f"{GITHUB_API}/search/code"
+    params = {"q": query, "per_page": per_page, "page": page}
     try:
-        r = session.get(url, timeout=timeout)
-        if r.status_code != 200:
-            return {"url": url, "error": f"HTTP {r.status_code}", "channels": []}
-        text = r.text
-        channels = parse_m3u(text)
-        return {"url": url, "error": None, "channels": channels, "raw": text}
+        r = requests.get(url, headers=get_gh_headers(token), params=params, timeout=REQUEST_TIMEOUT)
+        if r.status_code == 200:
+            return r.json()
+        elif r.status_code == 401:
+            return {"error": "توكن غير صالح أو منتهي", "status": 401}
+        elif r.status_code == 403:
+            return {"error": "تجاوزت حد الطلبات (Rate Limit)", "status": 403}
+        elif r.status_code == 422:
+            return {"error": "الكويري غير صالح", "status": 422}
+        else:
+            return {"error": f"HTTP {r.status_code}", "status": r.status_code}
     except Exception as e:
-        return {"url": url, "error": str(e)[:120], "channels": []}
+        return {"error": str(e)[:120]}
 
-# ========== تحليل M3U ==========
-def parse_m3u(text):
-    """تحليل ملف M3U ويرجّع قائمة قنوات"""
-    channels = []
-    lines = text.splitlines()
-    current = {}
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("#EXTINF"):
-            # استخراج الاسم
-            name = ""
-            if "," in line:
-                name = line.split(",", 1)[1].strip()
-            # استخراج logo
-            logo = ""
-            m = re.search(r'tvg-logo="([^"]*)"', line)
-            if m:
-                logo = m.group(1)
-            # استخراج group
-            group = ""
-            m = re.search(r'group-title="([^"]*)"', line)
-            if m:
-                group = m.group(1)
-            current = {"name": name, "logo": logo, "group": group}
-        elif line.startswith("http"):
-            if current:
-                current["url"] = line
-                channels.append(current)
-                current = {}
-            else:
-                channels.append({"name": "Unknown", "url": line, "logo": "", "group": ""})
-    return channels
+# ========== البحث في GitHub Repos ==========
+def search_github_repos(query, token=None, per_page=30, page=1):
+    url = f"{GITHUB_API}/search/repositories"
+    params = {"q": query, "per_page": per_page, "page": page, "sort": "updated"}
+    try:
+        r = requests.get(url, headers=get_gh_headers(token), params=params, timeout=REQUEST_TIMEOUT)
+        if r.status_code == 200:
+            return r.json()
+        return {"error": f"HTTP {r.status_code}", "status": r.status_code}
+    except Exception as e:
+        return {"error": str(e)[:120]}
 
-# ========== جلب متوازي من كل المصادر ==========
-def fetch_all_sources(sources, progress_cb=None):
-    results = []
-    total = len(sources)
-    done = 0
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        futures = {ex.submit(fetch_m3u, s): s for s in sources}
-        for fut in as_completed(futures):
-            try:
-                results.append(fut.result())
-            except Exception as e:
-                results.append({"url": futures[fut], "error": str(e), "channels": []})
-            done += 1
-            if progress_cb:
-                progress_cb(done, total)
-    return results
+# ========== جلب محتوى ملف ==========
+def fetch_file_content(repo_full_name, path, token=None):
+    url = f"{GITHUB_API}/repos/{repo_full_name}/contents/{path}"
+    try:
+        r = requests.get(url, headers=get_gh_headers(token), timeout=REQUEST_TIMEOUT)
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("encoding") == "base64":
+                return b64decode(data["content"]).decode("utf-8", errors="ignore")
+            return data.get("content", "")
+    except Exception:
+        pass
+    return None
 
-# ========== استخراج سيرفرات IPTV من أي نص ==========
-def extract_servers(text):
+# ========== استخراج سيرفرات Xtream من نص ==========
+def extract_xtream_servers(text):
+    """يستخرج سيرفرات Xtream Codes من نص"""
     servers = set()
-    for m in re.finditer(r'https?://[^\s<>"\']+', text):
-        u = m.group(0).rstrip("/")
-        servers.add(u)
-    for m in re.finditer(r'\b(\d{1,3}(?:\.\d{1,3}){3}:\d{2,5})\b', text):
-        servers.add("http://" + m.group(1))
+
+    # 1) get.php?username=..&password=..
+    for m in re.finditer(
+        r'(https?://[^\s"\'<>]+?)/get\.php\?username=([^\s"\'&<>]+)&password=([^\s"\'&<>]+)',
+        text, re.IGNORECASE
+    ):
+        base = m.group(1).rstrip("/")
+        user = m.group(2)
+        pwd = m.group(3)
+        servers.add(f"{base}|{user}|{pwd}")
+
+    # 2) player_api.php?username=..&password=..
+    for m in re.finditer(
+        r'(https?://[^\s"\'<>]+?)/player_api\.php\?username=([^\s"\'&<>]+)&password=([^\s"\'&<>]+)',
+        text, re.IGNORECASE
+    ):
+        base = m.group(1).rstrip("/")
+        user = m.group(2)
+        pwd = m.group(3)
+        servers.add(f"{base}|{user}|{pwd}")
+
+    # 3) panel_api.php
+    for m in re.finditer(
+        r'(https?://[^\s"\'<>]+?)/panel_api\.php\?username=([^\s"\'&<>]+)&password=([^\s"\'&<>]+)',
+        text, re.IGNORECASE
+    ):
+        base = m.group(1).rstrip("/")
+        user = m.group(2)
+        pwd = m.group(3)
+        servers.add(f"{base}|{user}|{pwd}")
+
+    # 4) Xtream codes pairs في JSON
+    for m in re.finditer(r'"host"\s*:\s*"(https?://[^"]+)"', text):
+        servers.add(m.group(1).rstrip("/"))
+
+    # 5) host:port
+    for m in re.finditer(r'\b(https?://\d{1,3}(?:\.\d{1,3}){3}:\d{2,5})\b', text):
+        servers.add(m.group(1).rstrip("/"))
+
     return sorted(servers)
+
+# ========== استخراج m3u8 و روابط تشغيل ==========
+def extract_streams(text):
+    streams = set()
+    for m in re.finditer(r'https?://[^\s"\'<>]+\.m3u8[^\s"\'<>]*', text):
+        streams.add(m.group(0))
+    for m in re.finditer(r'https?://[^\s"\'<>]+/live/[^\s"\'<>]+\.(ts|m3u8)', text):
+        streams.add(m.group(0))
+    return sorted(streams)
+
+# ========== فحص سيرفر Xtream ==========
+def check_xtream(entry, timeout=REQUEST_TIMEOUT):
+    """يفحص سيرفر Xtream ويرجّع معلوماته"""
+    result = {
+        "entry": entry,
+        "url": entry, "username": None, "password": None,
+        "status": "❌", "exp_date": None, "max_conn": None,
+        "active": None, "channels": 0, "movies": 0, "series": 0,
+        "timezone": None, "error": None
+    }
+
+    # فك الـ entry
+    if "|" in entry:
+        parts = entry.split("|")
+        base = parts[0].rstrip("/")
+        user = parts[1] if len(parts) > 1 else None
+        pwd = parts[2] if len(parts) > 2 else None
+    else:
+        base = entry.rstrip("/")
+        user, pwd = None, None
+
+    result["url"] = base
+    result["username"] = user
+    result["password"] = pwd
+
+    try:
+        if user and pwd:
+            api = f"{base}/player_api.php?username={user}&password={pwd}"
+        else:
+            api = f"{base}/player_api.php"
+
+        r = requests.get(api, timeout=timeout, verify=False,
+                         headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code != 200:
+            result["error"] = f"HTTP {r.status_code}"
+            return result
+
+        try:
+            data = r.json()
+        except Exception:
+            result["error"] = "ليس JSON"
+            return result
+
+        user_info = data.get("user_info", {}) or {}
+        server_info = data.get("server_info", {}) or {}
+
+        if user_info:
+            result["status"] = "✅ يعمل"
+            result["exp_date"] = user_info.get("exp_date")
+            result["max_conn"] = user_info.get("max_connections")
+            result["active"] = user_info.get("active_cons")
+            result["timezone"] = server_info.get("timezone")
+
+            if result["exp_date"]:
+                try:
+                    ts = int(result["exp_date"])
+                    result["exp_date_readable"] = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+                except Exception:
+                    result["exp_date_readable"] = str(result["exp_date"])
+
+            # عد المحتوى
+            try:
+                ch = requests.get(f"{api}&action=get_live_streams", timeout=timeout, verify=False)
+                if ch.status_code == 200:
+                    result["channels"] = len(ch.json())
+            except Exception:
+                pass
+            try:
+                mv = requests.get(f"{api}&action=get_vod_streams", timeout=timeout, verify=False)
+                if mv.status_code == 200:
+                    result["movies"] = len(mv.json())
+            except Exception:
+                pass
+            try:
+                sr = requests.get(f"{api}&action=get_series", timeout=timeout, verify=False)
+                if sr.status_code == 200:
+                    result["series"] = len(sr.json())
+            except Exception:
+                pass
+        else:
+            result["status"] = "⚠️ بدون بيانات"
+    except requests.exceptions.Timeout:
+        result["error"] = "Timeout"
+    except Exception as e:
+        result["error"] = str(e)[:100]
+
+    return result
 
 # ========== شاشة الدخول ==========
 def login_screen():
     st.set_page_config(page_title="BEAST V17 PRO", page_icon="🔥", layout="wide")
     st.markdown("""
-        <style>
-        .main-header {
-            background: linear-gradient(90deg,#ff4b2b,#ff416c);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            font-size: 3em; font-weight: bold; text-align:center;
-        }
-        .sub-header { text-align:center; color:#888; margin-bottom:2em; }
-        .stButton > button {
-            background: linear-gradient(90deg,#ff4b2b,#ff416c);
-            color:white; border:none; border-radius:8px; font-weight:bold;
-        }
-        .stButton > button:hover { transform: scale(1.02); }
-        .ch-card {
-            background:#1e1e1e; padding:10px; border-radius:8px;
-            margin:5px 0; border-left:4px solid #ff4b2b;
-        }
-        </style>
+    <style>
+    .main-header {
+        background: linear-gradient(90deg,#ff4b2b,#ff416c);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-size:3em; font-weight:bold; text-align:center;
+    }
+    .sub-header { text-align:center; color:#888; margin-bottom:2em; }
+    .stButton > button {
+        background: linear-gradient(90deg,#ff4b2b,#ff416c);
+        color:white; border:none; border-radius:8px; font-weight:bold;
+    }
+    </style>
     """, unsafe_allow_html=True)
     st.markdown('<div class="main-header">🔥 BEAST V17 PRO 🔥</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">IPTV Results Fetcher from GitHub</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">GitHub Xtream Codes Hunter</div>', unsafe_allow_html=True)
 
-    col1, col2, col3 = st.columns([1,2,1])
-    with col2:
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
         pwd = st.text_input("🔐 كلمة المرور", type="password")
         if st.button("🚀 دخول", use_container_width=True):
             if pwd == PASSWORD:
@@ -173,166 +262,254 @@ def login_screen():
                 st.rerun()
             else:
                 st.error("❌ كلمة مرور خاطئة")
-    return False
 
 # ========== الواجهة الرئيسية ==========
 def main_app():
     st.set_page_config(page_title="BEAST V17 PRO", page_icon="🔥", layout="wide")
-
     st.markdown('<div class="main-header">🔥 BEAST V17 PRO 🔥</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">IPTV Results Fetcher from GitHub</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">GitHub Xtream Codes Hunter</div>', unsafe_allow_html=True)
 
-    # Sidebar
+    # ===== Sidebar =====
     with st.sidebar:
         st.header("⚙️ الإعدادات")
+
+        # ✅ إضافة التوكن
+        st.markdown("### 🔑 GitHub Token")
+        token = st.text_input(
+            "أدخل التوكن (اختياري لكن يزود الحد)",
+            type="password",
+            value=st.session_state.get("gh_token", ""),
+            help="بدون توكن = 10 طلبات/دقيقة | مع توكن = 30 طلب/دقيقة"
+        )
+        st.session_state["gh_token"] = token
+
+        if token:
+            st.success("✅ تم إضافة التوكن")
+        else:
+            st.warning("⚠️ بدون توكن (حدود قليلة)")
+
+        st.divider()
         if st.button("🚪 تسجيل خروج", use_container_width=True):
             st.session_state.logged_in = False
             st.rerun()
+
         st.divider()
         st.markdown("### 📊 إحصائيات")
         data = load_data()
-        st.metric("القنوات المحفوظة", sum(len(v.get("channels", [])) for v in data.values()))
+        st.metric("النتائج المحفوظة", len(data))
 
-    tabs = st.tabs(["📡 جلب من GitHub", "🔗 روابط مخصصة", "🎯 استخراج سيرفرات", "💾 المحفوظات"])
+    # ===== Tabs =====
+    tabs = st.tabs([
+        "🔍 بحث Xtream في GitHub",
+        "📦 بحث Repos",
+        "🎯 استخراج من نص",
+        "💾 المحفوظات"
+    ])
 
-    # ===== Tab 1: جلب من GitHub =====
+    # ===== Tab 1: بحث Xtream في GitHub Code =====
     with tab1:
-        st.subheader("📡 جلب قوائم IPTV جاهزة من GitHub")
-        st.caption("اضغط الزر لجلب القوائم من مصادر GitHub الشهيرة")
+        st.subheader("🔍 البحث عن سيرفرات Xtream Codes في GitHub")
+        st.caption("يبحث في أكواد GitHub عن أنماط Xtream مثل `player_api.php?username=`")
 
-        col1, col2 = st.columns([1,1])
+        col1, col2 = st.columns([3, 1])
         with col1:
-            if st.button("🚀 جلب الآن", use_container_width=True):
+            query = st.text_input(
+                "🔎 كلمة البحث",
+                value='player_api.php?username=',
+                help="جرّب: panel_api.php, get.php?username, Xtream Codes, etc."
+            )
+        with col2:
+            pages = st.number_input("صفحات", 1, 10, 2)
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            per_page = st.slider("نتائج/صفحة", 10, 100, 30)
+        with col2:
+            auto_check = st.checkbox("فحص السيرفرات تلقائياً", value=True)
+        with col3:
+            max_check = st.number_input("حد الفحص", 5, 200, 30)
+
+        if st.button("🚀 ابدأ البحث", use_container_width=True):
+            token = st.session_state.get("gh_token", "") or None
+
+            all_items = []
+            progress = st.progress(0)
+            status = st.empty()
+
+            for p in range(1, int(pages) + 1):
+                status.text(f"⏳ جلب صفحة {p}...")
+                res = search_github_code(query, token=token, per_page=int(per_page), page=p)
+
+                if "error" in res:
+                    st.error(f"❌ {res['error']}")
+                    break
+
+                items = res.get("items", [])
+                if not items:
+                    break
+                all_items.extend(items)
+                progress.progress(p / int(pages))
+
+                # GitHub search rate limit: 10 req/min بدون توكن
+                if p < pages and not token:
+                    time.sleep(6)
+
+            progress.empty(); status.empty()
+
+            if not all_items:
+                st.warning("⚠️ لا توجد نتائج")
+            else:
+                st.success(f"✅ تم العثور على {len(all_items)} ملف")
+
+                # جلب محتوى الملفات واستخراج السيرفرات
+                all_servers = set()
                 progress = st.progress(0)
                 status = st.empty()
 
-                def cb(done, total):
-                    progress.progress(done/total)
-                    status.text(f"⏳ {done}/{total}")
+                for i, item in enumerate(all_items):
+                    repo = item["repository"]["full_name"]
+                    path = item["path"]
+                    status.text(f"⏳ تحليل {i+1}/{len(all_items)}")
 
-                results = fetch_all_sources(GITHUB_SOURCES, cb)
+                    content = fetch_file_content(repo, path, token)
+                    if content:
+                        found = extract_xtream_servers(content)
+                        all_servers.update(found)
+                        # أضف أيضاً روابط m3u8
+                        streams = extract_streams(content)
+                        all_servers.update(streams)
+
+                    progress.progress((i+1) / len(all_items))
+                    time.sleep(0.3)
+
                 progress.empty(); status.empty()
 
-                # تجميع
-                total_channels = 0
-                all_channels = []
-                for r in results:
-                    if r.get("channels"):
-                        total_channels += len(r["channels"])
-                        all_channels.extend(r["channels"])
+                servers = sorted(all_servers)
+                st.info(f"🎯 تم استخراج {len(servers)} سيرفر/رابط")
 
-                c1, c2, c3 = st.columns(3)
-                c1.metric("📦 المصادر", len(GITHUB_SOURCES))
-                c2.metric("✅ نجح", sum(1 for r in results if not r.get("error")))
-                c3.metric("📺 القنوات", total_channels)
+                st.session_state["xtream_servers"] = servers
 
-                st.session_state["gh_results"] = results
-                st.session_state["gh_all"] = all_channels
+                # عرض
+                if servers:
+                    st.divider()
+                    st.markdown("### 📋 السيرفرات المستخرجة")
+                    with st.expander("👁️ عرض الكل"):
+                        st.code("\n".join(servers), language="text")
 
-                # حفظ
-                data = load_data()
-                for r in results:
-                    if r.get("channels"):
-                        key = hashlib.md5(r["url"].encode()).hexdigest()[:12]
-                        data[key] = {"url": r["url"], "channels": r["channels"], "ts": datetime.now().isoformat()}
-                save_data(data)
-                st.success("✅ تم الجلب والحفظ")
-
-        with col2:
-            if st.button("🗑️ مسح النتائج", use_container_width=True):
-                st.session_state.pop("gh_results", None)
-                st.session_state.pop("gh_all", None)
-                st.rerun()
-
-        # عرض
-        results = st.session_state.get("gh_results", [])
-        if results:
-            st.divider()
-            st.markdown("### 📋 النتائج")
-
-            # فلترة
-            search = st.text_input("🔎 بحث في القنوات", placeholder="اسم قناة...")
-            all_channels = st.session_state.get("gh_all", [])
-
-            if search:
-                filtered = [c for c in all_channels if search.lower() in c.get("name","").lower()]
-                st.write(f"**{len(filtered)} نتيجة**")
-                for c in filtered[:500]:
-                    st.markdown(
-                        f'<div class="ch-card">📺 <b>{c["name"]}</b><br>'
-                        f'<small>{c.get("group","")} — {c["url"][:80]}...</small></div>',
-                        unsafe_allow_html=True
+                    st.download_button(
+                        "📥 تحميل TXT",
+                        "\n".join(servers),
+                        file_name=f"xtream_{int(time.time())}.txt",
+                        mime="text/plain"
                     )
-            else:
-                for r in results:
-                    if r.get("error"):
-                        st.error(f"❌ {r['url']} — {r['error']}")
-                    else:
-                        with st.expander(f"✅ {r['url'].split('/')[-1]} — {len(r['channels'])} قناة"):
-                            for c in r["channels"][:100]:
-                                st.markdown(f"📺 **{c['name']}** — `{c.get('group','')}`")
-                            if len(r["channels"]) > 100:
-                                st.caption(f"... و {len(r['channels'])-100} قناة أخرى")
 
-    # ===== Tab 2: روابط مخصصة =====
+                    # فحص
+                    if auto_check:
+                        st.divider()
+                        st.markdown("### 🔬 فحص السيرفرات")
+                        to_check = servers[:int(max_check)]
+                        progress = st.progress(0)
+                        status = st.empty()
+                        results = []
+
+                        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+                            futures = {ex.submit(check_xtream, s): s for s in to_check}
+                            done = 0
+                            for fut in as_completed(futures):
+                                try:
+                                    results.append(fut.result())
+                                except Exception as e:
+                                    results.append({"entry": futures[fut], "status": "❌", "error": str(e)[:80]})
+                                done += 1
+                                progress.progress(done / len(to_check))
+                                status.text(f"⏳ {done}/{len(to_check)}")
+
+                        progress.empty(); status.empty()
+
+                        # إحصائيات
+                        ok = sum(1 for r in results if "✅" in r.get("status", ""))
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("✅ يعمل", ok)
+                        c2.metric("❌ فاشل", len(results) - ok)
+                        c3.metric("📊 الإجمالي", len(results))
+
+                        # عرض
+                        for r in results:
+                            if "✅" in r.get("status", ""):
+                                with st.expander(f"✅ {r['url']} — {r.get('channels',0)} قناة"):
+                                    st.write(f"👤 User: `{r.get('username')}`")
+                                    st.write(f"🔑 Pass: `{r.get('password')}`")
+                                    st.write(f"📅 Exp: `{r.get('exp_date_readable','N/A')}`")
+                                    st.write(f"🔗 Conn: `{r.get('active')}/{r.get('max_conn')}`")
+                                    st.write(f"🌍 TZ: `{r.get('timezone','N/A')}`")
+                                    st.write(f"📺 Channels: `{r.get('channels',0)}` | 🎬 Movies: `{r.get('movies',0)}` | 📼 Series: `{r.get('series',0)}`")
+
+                        # حفظ
+                        data = load_data()
+                        for r in results:
+                            if "✅" in r.get("status", ""):
+                                key = hashlib.md5(r["entry"].encode()).hexdigest()[:12]
+                                data[key] = r
+                        save_data(data)
+
+    # ===== Tab 2: بحث Repos =====
     with tab2:
-        st.subheader("🔗 جلب من روابط M3U مخصصة")
-        urls_text = st.text_area("الصق روابط M3U (سطر لكل رابط)", height=150,
-                                  placeholder="https://example.com/list.m3u")
-        if st.button("🚀 جلب الروابط", use_container_width=True):
-            urls = [u.strip() for u in urls_text.splitlines() if u.strip()]
-            if urls:
-                progress = st.progress(0); status = st.empty()
-                def cb(done, total):
-                    progress.progress(done/total)
-                    status.text(f"⏳ {done}/{total}")
-                results = fetch_all_sources(urls, cb)
-                progress.empty(); status.empty()
-                st.session_state["custom_results"] = results
-            else:
-                st.warning("⚠️ أدخل روابط أولاً")
+        st.subheader("📦 البحث عن Repos تحتوي على Xtream Codes")
+        query = st.text_input("🔎 كلمة البحث في الريبوهات", value="xtream codes playlist")
+        pages = st.number_input("صفحات", 1, 5, 1, key="repo_pages")
 
-        for r in st.session_state.get("custom_results", []):
-            if r.get("error"):
-                st.error(f"❌ {r['url']} — {r['error']}")
-            else:
-                with st.expander(f"✅ {r['url']} — {len(r['channels'])} قناة"):
-                    for c in r["channels"][:200]:
-                        st.markdown(f"📺 **{c['name']}** — `{c.get('group','')}`")
+        if st.button("🚀 ابحث في Repos", use_container_width=True):
+            token = st.session_state.get("gh_token", "") or None
+            all_repos = []
+            for p in range(1, int(pages)+1):
+                res = search_github_repos(query, token=token, page=p)
+                if "error" in res:
+                    st.error(res["error"]); break
+                all_repos.extend(res.get("items", []))
+                if not token: time.sleep(6)
 
-    # ===== Tab 3: استخراج سيرفرات =====
+            st.success(f"✅ {len(all_repos)} repo")
+            for r in all_repos:
+                with st.expander(f"📦 {r['full_name']} ⭐{r['stargazers_count']}"):
+                    st.write(f"📝 {r.get('description','—')}")
+                    st.write(f"🔗 {r['html_url']}")
+                    st.write(f"🕒 آخر تحديث: {r['updated_at']}")
+
+    # ===== Tab 3: استخراج من نص =====
     with tab3:
-        st.subheader("🎯 استخراج سيرفرات IPTV من أي نص")
-        text = st.text_area("الصق النص هنا", height=200,
-                            placeholder="http://server.com:8080\n1.2.3.4:8080")
+        st.subheader("🎯 استخراج سيرفرات من نص")
+        text = st.text_area("الصق النص", height=250,
+                            placeholder="http://server.com:8080/get.php?username=USER&password=PASS")
         if st.button("🔎 استخراج", use_container_width=True):
-            servers = extract_servers(text)
-            if servers:
-                st.success(f"✅ تم العثور على {len(servers)} سيرفر")
-                st.code("\n".join(servers), language="text")
-                st.download_button("📥 تحميل", "\n".join(servers),
-                                   file_name="servers.txt", mime="text/plain")
+            servers = extract_xtream_servers(text)
+            streams = extract_streams(text)
+            if servers or streams:
+                st.success(f"✅ {len(servers)} Xtream + {len(streams)} stream")
+                if servers:
+                    st.markdown("**Xtream Servers:**")
+                    st.code("\n".join(servers), language="text")
+                if streams:
+                    st.markdown("**Streams:**")
+                    st.code("\n".join(streams), language="text")
             else:
-                st.warning("⚠️ لم يتم العثور على سيرفرات")
+                st.warning("⚠️ لا يوجد")
 
     # ===== Tab 4: المحفوظات =====
     with tab4:
-        st.subheader("💾 النتائج المحفوظة")
+        st.subheader("💾 المحفوظات")
         data = load_data()
         if not data:
-            st.info("📭 لا توجد بيانات")
+            st.info("📭 فاضي")
         else:
-            st.write(f"**{len(data)} مصدر محفوظ**")
+            st.write(f"**{len(data)} نتيجة**")
             for k, v in data.items():
-                with st.expander(f"📦 {v['url']} — {len(v.get('channels',[]))} قناة"):
-                    st.caption(f"🕒 {v.get('ts','')}")
-                    for c in v.get("channels", [])[:50]:
-                        st.markdown(f"📺 **{c['name']}** — `{c.get('group','')}`")
+                with st.expander(f"✅ {v.get('url','?')} — {v.get('channels',0)} قناة"):
+                    st.json(v)
             col1, col2 = st.columns(2)
             with col1:
                 st.download_button("📥 تصدير JSON",
                     json.dumps(data, ensure_ascii=False, indent=2),
-                    file_name="iptv_export.json", mime="application/json")
+                    file_name="export.json", mime="application/json")
             with col2:
                 if st.button("🗑️ حذف الكل"):
                     save_data({}); st.rerun()
