@@ -6,12 +6,14 @@ import hashlib
 import json
 import os
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ========== إعدادات ==========
-REQUEST_TIMEOUT = 5
-MAX_PAGES = 50
+REQUEST_TIMEOUT = 8
+MAX_PAGES = 100
 DATA_FILE = "iptv_data.json"
 PASSWORD = "BEAST_V17_PRO"
+MAX_WORKERS = 20  # عدد الثريدات للتوازي
 
 # ========== دوال حفظ وتحميل البيانات ==========
 def load_data():
@@ -19,7 +21,7 @@ def load_data():
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except:
+        except Exception:
             return {}
     return {}
 
@@ -27,368 +29,477 @@ def save_data(data):
     try:
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-    except:
+    except Exception:
         pass
+
+# ========== جلسة requests محسّنة ==========
+def get_session():
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
+        "Connection": "keep-alive",
+    })
+    return s
+
+# ========== دوال مساعدة ==========
+def normalize_url(url):
+    """تطبيع الرابط"""
+    if not url:
+        return None
+    url = url.strip()
+    if not url.startswith(("http://", "https://")):
+        url = "http://" + url
+    return url.rstrip("/")
+
+def extract_host_port(url):
+    """استخراج الهوست والبورت"""
+    try:
+        url = normalize_url(url)
+        m = re.match(r'https?://([^/:]+)(?::(\d+))?', url)
+        if m:
+            return m.group(1), m.group(2) or "80"
+    except Exception:
+        pass
+    return None, None
+
+def hash_url(url):
+    """توليد هاش للرابط"""
+    return hashlib.md5(url.encode()).hexdigest()[:12]
+
+# ========== فحص سيرفر IPTV ==========
+def check_server(url, username=None, password=None, timeout=REQUEST_TIMEOUT):
+    """فحص شامل لسيرفر IPTV"""
+    result = {
+        "url": url,
+        "status": "unknown",
+        "http_code": None,
+        "server_info": None,
+        "exp_date": None,
+        "max_connections": None,
+        "active_connections": None,
+        "timezone": None,
+        "channels": 0,
+        "movies": 0,
+        "series": 0,
+        "response_time": None,
+        "error": None,
+    }
+
+    session = get_session()
+    start = time.time()
+
+    try:
+        # فحص player_api.php
+        if username and password:
+            api_url = f"{url}/player_api.php?username={username}&password={password}"
+        else:
+            api_url = f"{url}/player_api.php"
+
+        r = session.get(api_url, timeout=timeout, verify=False)
+        result["http_code"] = r.status_code
+        result["response_time"] = round(time.time() - start, 2)
+
+        if r.status_code == 200:
+            try:
+                data = r.json()
+                result["server_info"] = data.get("server_info", {})
+                user_info = data.get("user_info", {})
+
+                if user_info:
+                    result["exp_date"] = user_info.get("exp_date")
+                    result["max_connections"] = user_info.get("max_connections")
+                    result["active_connections"] = user_info.get("active_cons")
+                    result["status"] = user_info.get("status", "Active")
+                    result["timezone"] = result["server_info"].get("timezone")
+
+                    # تحويل تاريخ الانتهاء
+                    if result["exp_date"]:
+                        try:
+                            exp_ts = int(result["exp_date"])
+                            result["exp_date_readable"] = datetime.fromtimestamp(exp_ts).strftime("%Y-%m-%d %H:%M")
+                        except Exception:
+                            result["exp_date_readable"] = str(result["exp_date"])
+
+                # جلب القنوات والأفلام والمسلسلات
+                try:
+                    ch = session.get(f"{url}/player_api.php?username={username}&password={password}&action=get_live_categories",
+                                     timeout=timeout, verify=False)
+                    if ch.status_code == 200:
+                        result["channels"] = len(ch.json())
+                except Exception:
+                    pass
+
+                try:
+                    mv = session.get(f"{url}/player_api.php?username={username}&password={password}&action=get_vod_categories",
+                                     timeout=timeout, verify=False)
+                    if mv.status_code == 200:
+                        result["movies"] = len(mv.json())
+                except Exception:
+                    pass
+
+                try:
+                    sr = session.get(f"{url}/player_api.php?username={username}&password={password}&action=get_series_categories",
+                                     timeout=timeout, verify=False)
+                    if sr.status_code == 200:
+                        result["series"] = len(sr.json())
+                except Exception:
+                    pass
+
+                result["status"] = "✅ يعمل" if result["status"] == "Active" else f"⚠️ {result['status']}"
+            except ValueError:
+                # ليس JSON - ممكن يكون m3u
+                if "#EXTM3U" in r.text[:500]:
+                    result["status"] = "✅ M3U Playlist"
+                    result["channels"] = r.text.count("#EXTINF")
+                else:
+                    result["status"] = "❌ غير صالح"
+        else:
+            result["status"] = f"❌ HTTP {r.status_code}"
+
+    except requests.exceptions.Timeout:
+        result["status"] = "⏱️ Timeout"
+        result["error"] = "انتهت المهلة"
+    except requests.exceptions.ConnectionError:
+        result["status"] = "🔌 فشل الاتصال"
+        result["error"] = "تعذر الاتصال"
+    except Exception as e:
+        result["status"] = "❌ خطأ"
+        result["error"] = str(e)[:100]
+
+    return result
+
+# ========== فحص متوازي ==========
+def check_servers_parallel(servers, username=None, password=None, progress_cb=None):
+    """فحص عدة سيرفرات بشكل متوازي"""
+    results = []
+    total = len(servers)
+    done = 0
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {
+            executor.submit(check_server, url, username, password): url
+            for url in servers
+        }
+        for fut in as_completed(futures):
+            try:
+                res = fut.result()
+                results.append(res)
+            except Exception as e:
+                results.append({
+                    "url": futures[fut],
+                    "status": "❌ خطأ",
+                    "error": str(e)[:100]
+                })
+            done += 1
+            if progress_cb:
+                progress_cb(done, total)
+
+    return results
+
+# ========== استخراج السيرفرات من نص ==========
+def extract_servers_from_text(text):
+    """استخراج جميع السيرفرات من نص"""
+    servers = set()
+
+    # نمط http/https
+    for m in re.finditer(r'https?://[^\s<>"\']+', text):
+        url = normalize_url(m.group(0))
+        if url:
+            servers.add(url)
+
+    # نمط host:port
+    for m in re.finditer(r'\b(\d{1,3}(?:\.\d{1,3}){3}:\d{2,5})\b', text):
+        servers.add(normalize_url(m.group(1)))
+
+    return sorted(servers)
 
 # ========== شاشة الدخول ==========
 def login_screen():
-    st.set_page_config(page_title="IPTV Hunter - Login", layout="centered", page_icon="🔒")
-    st.markdown("""
-    <style>
-        .stApp { background-color: #0a0a0a; }
-        .stTextInput input { background-color: #111111; color: #00ff88; border: 1px solid #00ff88; }
-        .stButton button { background-color: #111111; color: #00ff88; border: 1px solid #00ff88; }
-        .stButton button:hover { background-color: #00ff88; color: #000000; }
-    </style>
-    """, unsafe_allow_html=True)
-    st.title("🔐 IPTV Ultra Hunter Pro")
-    st.markdown("<h3 style='color:#00ff88;'>الرجاء إدخال كلمة المرور</h3>", unsafe_allow_html=True)
-    password_input = st.text_input("كلمة المرور", type="password", placeholder="********")
-    if st.button("دخول", type="primary"):
-        if password_input == PASSWORD:
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("كلمة المرور غير صحيحة")
+    st.set_page_config(page_title="BEAST V17 PRO", page_icon="🔥", layout="wide")
 
-# ========== التطبيق الرئيسي ==========
-def main_app():
-    st.set_page_config(page_title="IPTV Ultra Hunter Pro", layout="wide", page_icon="📡")
-    
-    # CSS للخلفية السوداء والأخضر الفسفوري
+    # CSS محسّن
     st.markdown("""
-    <style>
-        .stApp { background-color: #0a0a0a; }
-        body, .stMarkdown, .stText, .stTitle, .stSubheader, label, .stSelectbox label, .stSlider label {
-            color: #00ff88 !important;
-            font-family: 'Consolas', monospace;
+        <style>
+        .main-header {
+            background: linear-gradient(90deg, #ff4b2b, #ff416c);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-size: 3em;
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 0.2em;
+        }
+        .sub-header {
+            text-align: center;
+            color: #888;
+            margin-bottom: 2em;
+        }
+        .stButton > button {
+            background: linear-gradient(90deg, #ff4b2b, #ff416c);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            transition: 0.3s;
+        }
+        .stButton > button:hover {
+            transform: scale(1.02);
+            box-shadow: 0 4px 15px rgba(255,75,43,0.4);
         }
         .server-card {
-            background-color: #111111; padding: 12px; border-radius: 10px; margin-bottom: 10px;
-            border-left: 3px solid #00ff88; transition: 0.2s; color: #ccffcc;
+            background: #1e1e1e;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 8px 0;
+            border-left: 4px solid #ff4b2b;
         }
-        .server-card:hover { background-color: #1a1a1a; transform: translateX(5px); }
-        .active-server { border-left: 5px solid #00ff88; background-color: #1a331a; box-shadow: 0 0 8px #00ff88; }
-        .stProgress > div > div > div > div { background-color: #00ff88 !important; }
-        .stButton button { background-color: #111111; color: #00ff88; border: 1px solid #00ff88; border-radius: 8px; }
-        .stButton button:hover { background-color: #00ff88; color: #000000; }
-        .stTextInput input, .stTextArea textarea { background-color: #111111; color: #00ff88; border: 1px solid #00ff88; }
-        .stAlert { background-color: #111111; color: #00ff88; }
-    </style>
+        .success { color: #00ff88; font-weight: bold; }
+        .error { color: #ff4b2b; font-weight: bold; }
+        .warning { color: #ffaa00; font-weight: bold; }
+        </style>
     """, unsafe_allow_html=True)
 
-    # تحميل البيانات المحفوظة
-    saved = load_data()
-    
-    # تهيئة session_state
-    defaults = {
-        "accounts": saved.get("accounts", []),
-        "servers": saved.get("servers", []),
-        "channels_cache": saved.get("channels_cache", {}),
-        "current_server": None, "current_channels": [], "searching": False,
-        "log": saved.get("log", []), "tokens": saved.get("tokens", []),
-        "proxy": saved.get("proxy", ""), "unique_set": set(saved.get("unique_set", [])),
-        "dork_list": saved.get("dork_list", [
-            '"player_api.php?username="', '"get.php?username="', 'filename:m3u "xtream"',
-            '"/player_api.php" password', 'xtreamcodes "username" "password"',
-            'inurl:player_api.php?username=', 'inurl:get.php?username=',
-            '"xtream" filename:config', '"enigma2" user pass', '"streaming" username password m3u'
-        ]),
-        "current_dork_idx": 0, "current_token_idx": 0, "current_page": 1,
-        "selected_channel_id": None, "selected_server_idx": None,
-        "total_requests": 0, "last_update": 0
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
+    st.markdown('<div class="main-header">🔥 BEAST V17 PRO 🔥</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Advanced IPTV Checker & Scanner</div>', unsafe_allow_html=True)
 
-    # دوال مساعدة
-    def extract_xtream_accounts(content):
-        pattern = r'(https?://([a-zA-Z0-9.-]+):(\d+))/(?:player_api|get)\.php\?(?:username|user)=([^&\s]+)&(?:password|pass)=([^&\s]+)'
-        matches = re.findall(pattern, content, re.IGNORECASE)
-        return [(m[0], m[1], m[2], m[3], m[4]) for m in matches]
-
-    def check_account(full_url, host, port, user, pw, proxy):
-        try:
-            api = f"{full_url}/player_api.php?username={user}&password={pw}"
-            proxies = {"http": proxy, "https": proxy} if proxy else None
-            r = requests.get(api, timeout=REQUEST_TIMEOUT, proxies=proxies)
-            if r.status_code != 200: return None
-            data = r.json()
-            user_info = data.get("user_info", {})
-            if user_info.get("status") == "Active":
-                exp = user_info.get('exp_date')
-                exp_str = datetime.fromtimestamp(int(exp)).strftime('%Y-%m-%d') if exp else "دائم"
-                live_cats = data.get("available_channels", {}).get("live", [])
-                channels_count = len(live_cats) if isinstance(live_cats, list) else "غير معروف"
-                return {
-                    "full_url": full_url, "host": host, "port": port,
-                    "user": user, "pass": pw, "exp": exp_str,
-                    "channels_count": channels_count, "status": "Active", "message": ""
-                }
-        except: return None
-        return None
-
-    def search_github(dork, token, page, proxy):
-        url = f"https://api.github.com/search/code?q={dork}&per_page=100&page={page}"
-        headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
-        proxies = {"http": proxy, "https": proxy} if proxy else None
-        try:
-            resp = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT, proxies=proxies)
-            if resp.status_code == 200: return resp.json().get('items', [])
-            elif resp.status_code == 403:
-                st.session_state.log.insert(0, "⚠️ تجاوز حد الطلبات، انتظار 30 ثانية...")
-                time.sleep(30)
-        except: pass
-        return []
-
-    def process_raw(raw_url, proxy):
-        try:
-            proxies = {"http": proxy, "https": proxy} if proxy else None
-            resp = requests.get(raw_url, timeout=REQUEST_TIMEOUT, proxies=proxies)
-            if resp.status_code != 200: return []
-            return extract_xtream_accounts(resp.text)
-        except: return []
-
-    def load_channels(server, proxy):
-        try:
-            url = f"{server['full_url']}/player_api.php?username={server['user']}&password={server['pass']}&action=get_live_streams"
-            proxies = {"http": proxy, "https": proxy} if proxy else None
-            resp = requests.get(url, timeout=10, proxies=proxies)
-            if resp.status_code == 200:
-                ch = resp.json()
-                if isinstance(ch, list): return ch
-        except: pass
-        return []
-
-    def persist_data():
-        to_save = {
-            "accounts": st.session_state.accounts,
-            "servers": st.session_state.servers,
-            "channels_cache": st.session_state.channels_cache,
-            "log": st.session_state.log[:50],
-            "tokens": st.session_state.tokens,
-            "proxy": st.session_state.proxy,
-            "unique_set": list(st.session_state.unique_set),
-            "dork_list": st.session_state.dork_list
-        }
-        save_data(to_save)
-
-    # ========== الشريط الجانبي ==========
-    with st.sidebar:
-        st.image("https://img.icons8.com/fluency/96/iptv.png", width=60)
-        st.markdown("<h2 style='color:#00ff88;'>⚙️ IPTV Hunter</h2>", unsafe_allow_html=True)
-        tokens_input = st.text_area("🔑 GitHub Tokens (سطر لكل توكن)", 
-                                    value="\n".join(st.session_state.tokens) if st.session_state.tokens else "",
-                                    placeholder="ghp_token1\nghp_token2", height=100)
-        proxy_input = st.text_input("🌐 بروكسي (اختياري)", value=st.session_state.proxy, placeholder="http://user:pass@ip:port")
-        col1, col2 = st.columns(2)
-        if col1.button("🚀 بدء الصيد", use_container_width=True):
-            if not tokens_input.strip():
-                st.error("أدخل GitHub Tokens")
-            else:
-                st.session_state.searching = True
-                st.session_state.accounts = []
-                st.session_state.servers = []
-                st.session_state.log = []
-                st.session_state.unique_set = set()
-                st.session_state.current_dork_idx = 0
-                st.session_state.current_token_idx = 0
-                st.session_state.current_page = 1
-                st.session_state.tokens = [t.strip() for t in tokens_input.splitlines() if t.strip()]
-                st.session_state.proxy = proxy_input if proxy_input else None
-                st.session_state.log.insert(0, f"🚀 بدء البحث - {len(st.session_state.tokens)} توكن، {len(st.session_state.dork_list)} دورك")
-                persist_data()
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        pwd = st.text_input("🔐 كلمة المرور", type="password", placeholder="أدخل كلمة المرور")
+        if st.button("🚀 دخول", use_container_width=True):
+            if pwd == PASSWORD:
+                st.session_state.logged_in = True
                 st.rerun()
-        if col2.button("⏹️ إيقاف الصيد", use_container_width=True):
-            st.session_state.searching = False
-            st.session_state.log.insert(0, "⏸️ تم إيقاف البحث")
-            persist_data()
-            st.rerun()
-        st.markdown("---")
-        st.metric("💎 الحسابات الشغالة", len(st.session_state.accounts))
-        st.metric("🗄️ الخوادم النشطة", len(st.session_state.servers))
-        st.markdown("---")
-        st.subheader("📋 سجل العمليات")
-        log_container = st.container(height=220)
-        with log_container:
-            for msg in st.session_state.log[:30]:
-                st.markdown(f"<span style='color:#00ff88;'>• {msg}</span>", unsafe_allow_html=True)
+            else:
+                st.error("❌ كلمة مرور خاطئة")
 
-    # ========== محرك البحث ==========
-    if st.session_state.searching:
-        tokens = st.session_state.tokens
-        dorks = st.session_state.dork_list
-        dork_idx = st.session_state.current_dork_idx
-        token_idx = st.session_state.current_token_idx
-        page = st.session_state.current_page
-        proxy = st.session_state.proxy
+    return False
 
-        if token_idx >= len(tokens):
-            token_idx = 0
-            dork_idx += 1
-            if dork_idx >= len(dorks):
-                dork_idx = 0
-                st.session_state.log.insert(0, "🔄 بدأ دورة بحث جديدة")
-            st.session_state.current_token_idx = token_idx
-            st.session_state.current_dork_idx = dork_idx
-            st.session_state.current_page = 1
+# ========== الواجهة الرئيسية ==========
+def main_app():
+    st.set_page_config(page_title="BEAST V17 PRO", page_icon="🔥", layout="wide")
+
+    # Header
+    st.markdown('<div class="main-header">🔥 BEAST V17 PRO 🔥</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Advanced IPTV Checker & Scanner</div>', unsafe_allow_html=True)
+
+    # Sidebar
+    with st.sidebar:
+        st.header("⚙️ الإعدادات")
+        if st.button("🚪 تسجيل خروج", use_container_width=True):
+            st.session_state.logged_in = False
             st.rerun()
 
-        token = tokens[token_idx]
-        dork = dorks[dork_idx]
-        
-        total_steps = len(tokens) * len(dorks) * MAX_PAGES
-        current_step = (token_idx * len(dorks) * MAX_PAGES) + (dork_idx * MAX_PAGES) + page
-        progress = min(1.0, current_step / total_steps)
-        progress_bar = st.progress(progress)
-        status_text = st.empty()
-        status_text.markdown(f"<span style='color:#00ff88;'>🔍 البحث: {dork[:40]} | صفحة {page}/{MAX_PAGES} | توكن {token[:8]}... | فريد: {len(st.session_state.unique_set)}</span>", unsafe_allow_html=True)
-        
-        items = search_github(dork, token, page, proxy)
-        if items:
-            status_text.markdown(f"<span style='color:#00ff88;'>📄 معالجة {len(items)} ملف...</span>", unsafe_allow_html=True)
-            for item in items:
-                raw_url = item['html_url'].replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
-                accounts_raw = process_raw(raw_url, proxy)
-                for full_url, host, port, user, pw in accounts_raw:
-                    uid = hashlib.md5(f"{full_url}{user}{pw}".encode()).hexdigest()
-                    if uid in st.session_state.unique_set: continue
-                    st.session_state.unique_set.add(uid)
-                    checked = check_account(full_url, host, port, user, pw, proxy)
-                    if checked:
-                        st.session_state.accounts.append(checked)
-                        exists = any(s['full_url'] == checked['full_url'] for s in st.session_state.servers)
-                        if not exists:
-                            st.session_state.servers.append(checked)
-                            st.session_state.log.insert(0, f"✅ خادم جديد: {checked['host']}:{checked['port']} | {checked['user']}:{checked['pass']} | انتهاء {checked['exp']} | قنوات {checked['channels_count']}")
-                        else:
-                            st.session_state.log.insert(0, f"✅ حساب إضافي: {checked['host']}:{checked['port']} | {checked['user']}:{checked['pass']}")
-                        if len(st.session_state.log) > 50: st.session_state.log = st.session_state.log[:50]
-                        persist_data()
-            st.session_state.current_page += 1
-            if st.session_state.current_page > MAX_PAGES:
-                st.session_state.current_page = 1
-                st.session_state.current_token_idx += 1
+        st.divider()
+        st.markdown("### 📊 إحصائيات")
+        data = load_data()
+        st.metric("إجمالي السيرفرات المحفوظة", len(data))
+
+    # Tabs
+    tab1, tab2, tab3, tab4 = st.tabs(["🔍 فحص سيرفر", "📋 فحص قائمة", "💾 المحفوظات", "📖 معلومات"])
+
+    # ===== Tab 1: فحص سيرفر واحد =====
+    with tab1:
+        st.subheader("🔍 فحص سيرفر واحد")
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            url = st.text_input("🌐 رابط السيرفر", placeholder="http://example.com:8080")
+        with col2:
+            username = st.text_input("👤 اسم المستخدم", placeholder="اختياري")
+        with col3:
+            password = st.text_input("🔑 كلمة المرور", type="password", placeholder="اختياري")
+
+        if st.button("🚀 فحص الآن", use_container_width=True, key="check_single"):
+            if url:
+                with st.spinner("⏳ جاري الفحص..."):
+                    result = check_server(normalize_url(url), username or None, password or None)
+                    display_result(result)
+
+                # حفظ
+                if st.button("💾 حفظ النتيجة"):
+                    data = load_data()
+                    data[hash_url(result["url"])] = result
+                    save_data(data)
+                    st.success("✅ تم الحفظ")
+            else:
+                st.warning("⚠️ أدخل رابط السيرفر")
+
+    # ===== Tab 2: فحص قائمة =====
+    with tab2:
+        st.subheader("📋 فحص قائمة سيرفرات")
+        text_input = st.text_area(
+            "📝 الصق السيرفرات (سطر لكل سيرفر أو في نص)",
+            height=200,
+            placeholder="http://server1.com:8080\nhttp://server2.com:8080"
+        )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            bulk_user = st.text_input("👤 اسم المستخدم (اختياري)", key="bulk_user")
+        with col2:
+            bulk_pass = st.text_input("🔑 كلمة المرور (اختياري)", type="password", key="bulk_pass")
+
+        if st.button("🚀 فحص الكل", use_container_width=True, key="check_bulk"):
+            if text_input:
+                servers = extract_servers_from_text(text_input)
+                if not servers:
+                    st.warning("⚠️ لم يتم العثور على سيرفرات")
+                else:
+                    st.info(f"🔎 تم العثور على {len(servers)} سيرفر")
+
+                    progress = st.progress(0)
+                    status = st.empty()
+
+                    def cb(done, total):
+                        progress.progress(done / total)
+                        status.text(f"⏳ {done}/{total}")
+
+                    results = check_servers_parallel(
+                        servers,
+                        bulk_user or None,
+                        bulk_pass or None,
+                        progress_cb=cb
+                    )
+
+                    progress.empty()
+                    status.empty()
+
+                    # إحصائيات
+                    success = sum(1 for r in results if "✅" in r.get("status", ""))
+                    failed = len(results) - success
+
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("✅ ناجح", success)
+                    c2.metric("❌ فاشل", failed)
+                    c3.metric("📊 الإجمالي", len(results))
+
+                    # عرض النتائج
+                    st.divider()
+                    for r in results:
+                        display_result(r)
+
+                    # حفظ الكل
+                    data = load_data()
+                    for r in results:
+                        data[hash_url(r["url"])] = r
+                    save_data(data)
+                    st.success(f"✅ تم حفظ {len(results)} نتيجة")
+            else:
+                st.warning("⚠️ الصق السيرفرات أولاً")
+
+    # ===== Tab 3: المحفوظات =====
+    with tab3:
+        st.subheader("💾 السيرفرات المحفوظة")
+        data = load_data()
+        if not data:
+            st.info("📭 لا توجد بيانات محفوظة")
         else:
-            st.session_state.current_token_idx += 1
-            st.session_state.current_page = 1
-        
-        st.session_state.log.insert(0, f"⏳ فحص {len(st.session_state.unique_set)} رابط، {len(st.session_state.servers)} خادم نشط")
-        if len(st.session_state.log) > 50: st.session_state.log = st.session_state.log[:50]
-        persist_data()
-        time.sleep(0.7)
-        st.rerun()
-    else:
-        st.info("اضغط 'بدء الصيد' لبدء البحث عن حسابات Xtream")
+            # بحث
+            search = st.text_input("🔎 بحث", placeholder="ابحث عن سيرفر...")
 
-    # ========== واجهة ثلاثية الأعمدة ==========
-    st.markdown("---")
-    st.markdown("<h1 style='text-align:center; color:#00ff88;'>📡 IPTV Ultra Hunter Pro</h1>", unsafe_allow_html=True)
-    col_servers, col_channels, col_player = st.columns([1.2, 2, 2.5])
+            filtered = list(data.values())
+            if search:
+                filtered = [r for r in filtered if search.lower() in r["url"].lower()]
 
-    with col_servers:
-        st.markdown("<h3 style='color:#00ff88;'>🗄️ خوادم Xtream النشطة</h3>", unsafe_allow_html=True)
-        if st.session_state.servers:
-            for idx, srv in enumerate(st.session_state.servers):
-                active_class = "active-server" if st.session_state.selected_server_idx == idx else ""
-                st.markdown(f"""
-                <div class='server-card {active_class}'>
-                    <b>🌐 {srv['host']}:{srv['port']}</b><br>
-                    👤 {srv['user']}<br>
-                    🔑 {srv['pass']}<br>
-                    📅 انتهاء: {srv['exp']}<br>
-                    📺 قنوات: {srv['channels_count']}
-                </div>
-                """, unsafe_allow_html=True)
-                if st.button(f"اختيار", key=f"sel_{idx}", use_container_width=True):
-                    st.session_state.selected_server_idx = idx
-                    st.session_state.current_server = srv
-                    key = f"{srv['full_url']}|{srv['user']}"
-                    if key in st.session_state.channels_cache:
-                        st.session_state.current_channels = st.session_state.channels_cache[key]
-                    else:
-                        with st.spinner("تحميل القنوات..."):
-                            ch = load_channels(srv, st.session_state.proxy)
-                            st.session_state.channels_cache[key] = ch
-                            st.session_state.current_channels = ch
-                    st.session_state.selected_channel_id = None
-                    persist_data()
+            st.write(f"**النتائج: {len(filtered)}**")
+
+            # تصدير
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("📥 تصدير JSON"):
+                    st.download_button(
+                        "⬇️ تحميل",
+                        json.dumps(filtered, ensure_ascii=False, indent=2),
+                        file_name=f"iptv_export_{int(time.time())}.json",
+                        mime="application/json"
+                    )
+            with col2:
+                if st.button("🗑️ حذف الكل"):
+                    save_data({})
                     st.rerun()
-        else:
-            st.info("لا توجد خوادم بعد. ابدأ البحث.")
 
-    with col_channels:
-        st.markdown("<h3 style='color:#00ff88;'>📺 قنوات السيرفر المختار</h3>", unsafe_allow_html=True)
-        if st.session_state.current_server:
-            st.markdown(f"<span style='color:#00ff88;'><b>{st.session_state.current_server['host']}:{st.session_state.current_server['port']}</b> | {st.session_state.current_server['user']}</span>", unsafe_allow_html=True)
-            search_ch = st.text_input("🔍 بحث في القنوات", placeholder="اسم القناة...", key="search_channels")
-            if st.session_state.current_channels:
-                filtered = [c for c in st.session_state.current_channels if search_ch.lower() in c['name'].lower()] if search_ch else st.session_state.current_channels
-                scroll_container = st.container(height=540)
-                with scroll_container:
-                    for ch in filtered[:2000]:
-                        ch_name = ch['name'][:70]
-                        if st.button(f"📡 {ch_name} (ID:{ch['stream_id']})", key=f"ch_{ch['stream_id']}", use_container_width=True):
-                            st.session_state.selected_channel_id = ch['stream_id']
-                            st.rerun()
-            else:
-                st.warning("لا توجد قنوات لهذا الخادم")
-        else:
-            st.info("اختر خادماً من القائمة اليسرى")
+            st.divider()
+            for r in filtered:
+                display_result(r, show_delete=True)
 
-    with col_player:
-        st.markdown("<h3 style='color:#00ff88;'>🎬 مشغل فيديو متقدم</h3>", unsafe_allow_html=True)
-        if st.session_state.selected_channel_id and st.session_state.current_server:
-            srv = st.session_state.current_server
-            quality = st.selectbox("الجودة", ["HLS (M3U8) - موصى به", "أصلية (TS)", "720p", "480p", "360p", "240p", "144p", "96p"], index=0)
-            if quality == "HLS (M3U8) - موصى به":
-                ext = "m3u8"
-            else:
-                ext = st.selectbox("الصيغة", ["m3u8", "ts"], index=0)
-            
-            base_url = f"{srv['full_url']}/live/{srv['user']}/{srv['pass']}/{st.session_state.selected_channel_id}.{ext}"
-            bitrate_map = {"720p": "720", "480p": "480", "360p": "360", "240p": "240", "144p": "144", "96p": "96"}
-            if quality in bitrate_map:
-                base_url += f"?bitrate={bitrate_map[quality]}"
-            
-            st.markdown(f"<span style='color:#cccccc;'>🔗 رابط البث: <code>{base_url[:100]}...</code></span>", unsafe_allow_html=True)
-            
-            if ext == "m3u8":
-                st.components.v1.html(f"""
-                <div style="background-color:#000; border-radius:12px; padding:5px;">
-                    <video id="ultra-player" controls autoplay width="100%" height="auto" style="border-radius:12px;"></video>
-                </div>
-                <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-                <script>
-                    var video = document.getElementById('ultra-player');
-                    if (Hls.isSupported()) {{
-                        var hls = new Hls();
-                        hls.loadSource('{base_url}');
-                        hls.attachMedia(video);
-                        hls.on(Hls.Events.MANIFEST_PARSED, function() {{ video.play(); }});
-                    }} else if (video.canPlayType('application/vnd.apple.mpegurl')) {{
-                        video.src = '{base_url}';
-                        video.addEventListener('loadedmetadata', function() {{ video.play(); }});
-                    }} else {{
-                        document.write('متصفحك لا يدعم HLS');
-                    }}
-                </script>
-                """, height=440)
-            else:
-                st.video(base_url)
-                st.warning("⚠️ صيغة TS قد لا تعمل في جميع المتصفحات. يُفضل استخدام HLS (M3U8).")
-            
-            if st.button("📋 نسخ رابط البث", use_container_width=True):
-                st.code(base_url)
-        else:
-            st.warning("اختر خادماً ثم قناة من القائمة")
+    # ===== Tab 4: معلومات =====
+    with tab4:
+        st.subheader("📖 معلومات")
+        st.markdown("""
+        ### 🔥 BEAST V17 PRO
+        
+        **المميزات:**
+        - ✅ فحص سيرفرات IPTV بشكل متوازي (20 ثريد)
+        - ✅ استخراج تلقائي للسيرفرات من نص
+        - ✅ عرض معلومات الاشتراك (تاريخ الانتهاء، الاتصالات)
+        - ✅ عد القنوات والأفلام والمسلسلات
+        - ✅ حفظ واسترجاع النتائج
+        - ✅ تصدير JSON
+        
+        **الإصدار:** 17.0 PRO
+        **آخر تحديث:** 2024
+        """)
 
-# ========== نقطة الدخول ==========
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
+# ========== عرض النتيجة ==========
+def display_result(r, show_delete=False):
+    """عرض نتيجة فحص بشكل منسق"""
+    status = r.get("status", "unknown")
 
-if not st.session_state.authenticated:
-    login_screen()
-else:
-    main_app()
+    # تحديد اللون
+    if "✅" in status:
+        color = "#00ff88"
+    elif "⚠️" in status:
+        color = "#ffaa00"
+    else:
+        color = "#ff4b2b"
+
+    with st.expander(f"🌐 {r['url']}  —  {status}"):
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.markdown("**📡 معلومات الاتصال**")
+            st.write(f"HTTP: `{r.get('http_code', 'N/A')}`")
+            st.write(f"⏱️ الوقت: `{r.get('response_time', 'N/A')}s`")
+            st.write(f"🌍 المنطقة: `{r.get('timezone', 'N/A')}`")
+
+        with col2:
+            st.markdown("**👤 معلومات الاشتراك**")
+            st.write(f"الحالة: `{r.get('status', 'N/A')}`")
+            st.write(f"📅 الانتهاء: `{r.get('exp_date_readable', r.get('exp_date', 'N/A'))}`")
+            st.write(f"🔗 الاتصالات: `{r.get('active_connections', 'N/A')}/{r.get('max_connections', 'N/A')}`")
+
+        with col3:
+            st.markdown("**📺 المحتوى**")
+            st.write(f"📺 قنوات: `{r.get('channels', 0)}`")
+            st.write(f"🎬 أفلام: `{r.get('movies', 0)}`")
+            st.write(f"📼 مسلسلات: `{r.get('series', 0)}`")
+
+        if r.get("error"):
+            st.error(f"⚠️ {r['error']}")
+
+        if show_delete:
+            if st.button("🗑️ حذف", key=f"del_{r['url']}"):
+                data = load_data()
+                data.pop(hash_url(r["url"]), None)
+                save_data(data)
+                st.rerun()
+
+# ========== نقطة البداية ==========
+def main():
+    # تعطيل تحذيرات SSL
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
+
+    if not st.session_state.logged_in:
+        login_screen()
+    else:
+        main_app()
+
+if __name__ == "__main__":
+    main()
